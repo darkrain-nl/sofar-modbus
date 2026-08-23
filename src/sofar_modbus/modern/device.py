@@ -6,7 +6,13 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from modbus_connection import ModbusConnectionError, ModbusError, ModbusTimeoutError
+from modbus_connection import (
+    IllegalDataAddressError,
+    IllegalFunctionError,
+    ModbusConnectionError,
+    ModbusError,
+    ModbusTimeoutError,
+)
 from modbus_connection.decode import decode_string
 
 from ..model import SofarComponent, UpdateReport
@@ -59,9 +65,8 @@ SERIAL_WORDS = 7
 _SET_TIME_REGISTER = 0x1004
 _IV_CURVE_SCAN_REGISTER = 0x1027
 
-# Serial-number prefix -> (inverter bitmask, model name). Ported from the
-# plugin's async_determineInverterType; the first matching prefix wins, so the
-# table is ordered longest-first.
+# Ported from the plugin's async_determineInverterType; ordered
+# longest-prefix-first so the first match is the most specific one.
 _SERIAL_PREFIXES: tuple[tuple[str, InverterType, str | None], ...] = (
     ("SP1ES120N6", HYBRID | X3, "HYD20KTL-3P"),
     ("SQ1ES1", PV | X3 | GEN | MPPT10, "100kW KTLX-G4"),
@@ -89,9 +94,7 @@ _SERIAL_PREFIXES: tuple[tuple[str, InverterType, str | None], ...] = (
 def identify(serial: str) -> tuple[InverterType, str | None]:
     """The inverter type and model a serial number implies.
 
-    Returns ``InverterType(0)`` for a serial the plugin does not recognise —
-    which means "no component applies", so pass ``inverter_type`` to
-    :class:`SofarInverter` explicitly for such a device.
+    Unrecognised serials return ``InverterType(0)``; pass it explicitly.
     """
     for prefix, invertertype, model in _SERIAL_PREFIXES:
         if serial.startswith(prefix):
@@ -102,26 +105,7 @@ def identify(serial: str) -> tuple[InverterType, str | None]:
 class SofarInverter:
     """A current-generation Sofar inverter reached through a ``ModbusUnit``.
 
-    The consumer owns the connection and hands over a unit::
-
-        inverter = SofarInverter(unit, read_eps=True)
-        await inverter.async_update()
-        inverter.state.system_state
-        inverter.grid.active_power_output_total
-        inverter.pv_1_2.pv_power_total
-
-    Which of the sub-systems below the device actually has depends on the model,
-    which the first update reads off the serial number. Every component exists as
-    an attribute whatever the model; a poll reads only the subset this inverter
-    serves and reports it by attribute name. A component that is not polled
-    leaves all its fields at ``None``.
-
-    Telemetry measurements and configured settings refresh separately — via
-    ``async_update_readings()`` and ``async_update_settings()`` — or together
-    via ``async_update()``.
-
-    ASCII framing over TCP is not supported. Build the unit from an RTU or
-    RTU-over-TCP connection.
+    Build the unit from RTU -- ASCII framing over TCP is unsupported.
     """
 
     def __init__(
@@ -131,21 +115,14 @@ class SofarInverter:
         serial_number: str | None = None,
         model: str | None = None,
         inverter_type: InverterType | None = None,
-        read_eps: bool = False,
         read_pm: bool = False,
     ) -> None:
         """Set up the sub-systems.
 
-        ``read_eps`` and ``read_pm`` mirror the integration's options: the
-        off-grid and parallel-system registers are only read when asked for,
-        because an inverter without them refuses the blocks. ``serial_number``,
-        ``model`` and ``inverter_type`` allow callers that already know the device's
-        identity to pass them in and skip reading the serial number over Modbus.
+        ``read_pm`` reads parallel-system registers an inverter refuses.
         """
         self._unit = unit
-        self._options = (EPS if read_eps else InverterType(0)) | (
-            PM if read_pm else InverterType(0)
-        )
+        self._options = PM if read_pm else InverterType(0)
         self.model = model
         self.serial_number = serial_number
         self.inverter_type = (
@@ -180,7 +157,7 @@ class SofarInverter:
         self.active_power_control = ActivePowerControl(unit)
         self.charger = ChargerMode(unit)
         self.passive = PassiveMode(unit)
-        # Read one pack at a time through async_read_pack(), never with the poll.
+        # Read via async_read_pack(), one pack at a time; never in the poll.
         self.battery_pack = BatteryPack(unit)
 
         self._readings: list[str] | None = None
@@ -192,11 +169,7 @@ class SofarInverter:
         return self.inverter_type is not None and BAT_BTS in self.inverter_type
 
     async def _async_setup(self) -> None:
-        """Read the serial number, settle the model, and pick what to poll.
-
-        Run by the first update if not already set up. A failure leaves the
-        device unset up, so the next update retries.
-        """
+        """Read the serial number, settle the model, and pick what to poll."""
         if self.serial_number is None:
             words = await self._unit.read_holding_registers(
                 SERIAL_REGISTER, SERIAL_WORDS
@@ -213,6 +186,13 @@ class SofarInverter:
                 self.model = model
         inverter_type = self.inverter_type
         assert inverter_type is not None
+        if (
+            EPS not in inverter_type
+            and matches(inverter_type, self.offgrid.applies_to & ~EPS)
+            and await self._async_probe_eps()
+        ):
+            inverter_type |= EPS
+            self.inverter_type = inverter_type
         self._readings = [
             name
             for name in (
@@ -254,6 +234,14 @@ class SofarInverter:
             if matches(inverter_type, getattr(self, name).applies_to)
         ]
 
+    async def _async_probe_eps(self) -> bool:
+        """Whether this inverter answers the off-grid (EPS) block."""
+        try:
+            await self.offgrid.async_update(notify=False)
+        except (IllegalDataAddressError, IllegalFunctionError):
+            return False
+        return True
+
     def _notify(self, report: UpdateReport) -> None:
         """Fire listeners on every component that successfully refreshed."""
         for name in report.updated:
@@ -272,7 +260,7 @@ class SofarInverter:
     async def async_update_settings(self) -> UpdateReport:
         """Refresh configuration registers (charger mode, limits, battery config).
 
-        Split from telemetry because configuration only changes when written.
+        Split from telemetry: configuration only changes when written.
         """
         if self._settings is None:
             await self._async_setup()
@@ -298,12 +286,7 @@ class SofarInverter:
     ) -> UpdateReport:
         """Read each component on its own, adding what happened to ``report``.
 
-        Components are read independently, the way the integration reads its
-        blocks: a sub-system whose read fails keeps its previous values while
-        the rest still refresh. A failure of the link itself raises
-        ``ModbusConnectionError`` instead of reporting, and so does a timeout
-        before anything has answered: a silent inverter is not walked component
-        by component, paying a timeout for each.
+        A dead link raises instead of reporting a per-component failure.
         """
         if report is None:
             report = UpdateReport(set(), {})
@@ -326,13 +309,7 @@ class SofarInverter:
     async def async_read_raw(self) -> dict[str, dict[int, int | bool]]:
         """Every register this inverter reads, undecoded — for diagnostics.
 
-        The serial number setup reads sits inside ``identity``, which is polled,
-        so the polled components already cover it. Left out are the blocks this
-        inverter does not serve, and ``battery_pack``: the tower answers for one
-        selected pack at a time, so a dump of that block would be whichever pack
-        happened to be selected, with nothing to say which. Read packs through
-        :meth:`async_read_pack`. Nothing notifies: a download is not a poll.
-        The first call sets the inverter up.
+        ``battery_pack`` is excluded: no way to say which pack it is.
         """
         if self._readings is None or self._settings is None:
             await self._async_setup()
@@ -347,10 +324,7 @@ class SofarInverter:
     async def async_read_pack(self, string_nr: int, pack_nr: int) -> BatteryPack:
         """Select a BTS pack and read it.
 
-        The tower answers for one pack at a time, so this is a two-step
-        exchange rather than part of the poll. Check ``pack_id`` against the
-        selection before trusting the values: a tower that has not switched
-        over yet still answers, with the previous pack's data.
+        Check ``pack_id``: a not-yet-switched tower still answers.
         """
         await self.battery_pack.async_select(string_nr, pack_nr)
         await self.battery_pack.async_update()
@@ -359,9 +333,7 @@ class SofarInverter:
     async def async_set_time(self, when: datetime | None = None) -> None:
         """Write the inverter's clock.
 
-        Seven registers go out at once — year, month, day, hour, minute, second
-        and a trailing constant 1 the device requires. ``rtc_sync`` reports
-        whether it took.
+        ``rtc_sync`` reports whether the seven-register write took.
         """
         moment = when or datetime.now()
         await self._unit.write_registers(

@@ -184,18 +184,18 @@ LEGACY_HOLDING: dict[int, int | list[int]] = {
 
 @pytest.fixture
 def hybrid(mock_modbus_unit: MockModbusUnit) -> SofarInverter:
-    """A three-phase HYD hybrid with EPS and parallel registers enabled."""
+    """A three-phase HYD hybrid; EPS is auto-probed, PM enabled."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     mock_modbus_unit.holding.update(BATTERY_PACK_HOLDING)
-    return SofarInverter(mock_modbus_unit, read_eps=True, read_pm=True)
+    return SofarInverter(mock_modbus_unit, read_pm=True)
 
 
 @pytest.fixture
 def legacy_hybrid(mock_modbus_unit: MockModbusUnit) -> SofarLegacyInverter:
-    """An older single-phase storage inverter with EPS enabled."""
+    """An older single-phase storage inverter; EPS is auto-probed."""
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
     mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
-    return SofarLegacyInverter(mock_modbus_unit, read_eps=True)
+    return SofarLegacyInverter(mock_modbus_unit)
 
 
 @pytest.fixture

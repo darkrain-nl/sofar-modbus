@@ -47,7 +47,7 @@ async def main() -> None:
         ModbusTcpParams(host="192.168.1.50", port=502, framer="rtu")
     )
     try:
-        inverter = SofarInverter(connection.for_unit(1), read_eps=True)
+        inverter = SofarInverter(connection.for_unit(1))
         await inverter.async_update()
 
         print("Model:", inverter.model, inverter.serial_number)

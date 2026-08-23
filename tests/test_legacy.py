@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import pytest
+from modbus_connection import (
+    IllegalDataAddressError,
+    IllegalFunctionError,
+    ServerDeviceFailureError,
+)
 from modbus_connection.mock import MockModbusUnit
 
 from sofar_modbus import SofarLegacyInverter
@@ -33,7 +38,8 @@ async def test_setup_strips_the_padding_the_boards_add(
     inverter = SofarLegacyInverter(mock_modbus_unit)
     await inverter._async_setup()
     assert inverter.serial_number == "SM1E234567"
-    assert inverter.inverter_type == HYBRID | X1
+    # A hybrid always gets probed; the mock answers 0 for unset registers.
+    assert inverter.inverter_type == HYBRID | X1 | EPS
 
 
 async def test_storage_registers(legacy_hybrid: SofarLegacyInverter) -> None:
@@ -82,20 +88,54 @@ async def test_a_single_phase_storage_inverter_skips_the_s_and_t_phases(
     assert legacy_hybrid.storage.voltage_r is not None
 
 
-async def test_eps_registers_need_the_option(
+async def test_the_eps_probe_detects_presence(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
+    """A hybrid inverter that answers the EPS registers gets EPS set."""
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
     mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
-    without = SofarLegacyInverter(mock_modbus_unit)
-    await without.async_update()
-    assert without.storage_eps.eps_voltage is None
-    assert not any(b.address == 0x0216 for b in mock_modbus_unit.read_events)
+    inverter = SofarLegacyInverter(mock_modbus_unit)
+    await inverter.async_update()
+    assert inverter.storage_eps.eps_voltage == pytest.approx(228.0)
+    assert EPS in (inverter.inverter_type or InverterType(0))
 
-    with_eps = SofarLegacyInverter(mock_modbus_unit, read_eps=True)
-    await with_eps.async_update()
-    assert with_eps.storage_eps.eps_voltage == pytest.approx(228.0)
-    assert EPS in (with_eps.inverter_type or InverterType(0))
+
+@pytest.mark.parametrize("error", [IllegalDataAddressError(), IllegalFunctionError()])
+async def test_the_eps_probe_detects_absence(
+    mock_modbus_unit: MockModbusUnit, error: Exception
+) -> None:
+    """Either exception code means the EPS registers do not exist."""
+    mock_modbus_unit.holding.update(LEGACY_HOLDING)
+    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
+    mock_modbus_unit.fail_read(0x0216, error)
+    inverter = SofarLegacyInverter(mock_modbus_unit)
+    await inverter.async_update()
+    assert inverter.storage_eps.eps_voltage is None
+    assert EPS not in (inverter.inverter_type or InverterType(0))
+
+
+async def test_the_eps_probe_is_skipped_for_a_pv_only_inverter(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A PV-only inverter can never have EPS, so it is never probed."""
+    mock_modbus_unit.holding.update(LEGACY_HOLDING)
+    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_THREE_PHASE_PV_SERIAL, 6)
+    inverter = SofarLegacyInverter(mock_modbus_unit)
+    await inverter.async_update()
+    assert not any(e.address == 0x0216 for e in mock_modbus_unit.read_events)
+
+
+async def test_a_probe_failure_other_than_absence_propagates(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A real device error is not mistaken for "no EPS" and swallowed."""
+    mock_modbus_unit.holding.update(LEGACY_HOLDING)
+    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
+    mock_modbus_unit.fail_read(0x0216, ServerDeviceFailureError())
+    inverter = SofarLegacyInverter(mock_modbus_unit)
+    with pytest.raises(ServerDeviceFailureError):
+        await inverter.async_update()
+    assert inverter._polled is None  # setup did not complete; retry next time
 
 
 async def test_three_phase_pv(legacy_three_phase_pv: SofarLegacyInverter) -> None:
@@ -170,7 +210,7 @@ async def test_an_ac_coupled_inverter_reads_the_input_register_setting(
 async def test_constructor_identity_skips_serial_number_read(
     legacy_hybrid: SofarLegacyInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    """Identity passed to the constructor skips the serial-number read."""
+    """Identity given to the constructor still gets probed for EPS."""
     await legacy_hybrid.async_update()
 
     mock_modbus_unit.read_events.clear()
@@ -178,10 +218,10 @@ async def test_constructor_identity_skips_serial_number_read(
         mock_modbus_unit,
         serial_number=LEGACY_HYBRID_SERIAL,
         inverter_type=HYBRID | X1,
-        read_eps=True,
     )
     await device._async_setup()
 
-    assert not mock_modbus_unit.read_events  # no serial number register read
+    # The only read is the EPS probe; the serial number is never touched.
+    assert [e.address for e in mock_modbus_unit.read_events] == [0x0216]
     assert device.serial_number == LEGACY_HYBRID_SERIAL
     assert device.inverter_type == legacy_hybrid.inverter_type
