@@ -27,13 +27,12 @@ if TYPE_CHECKING:
 SERIAL_REGISTER = 0x2002  # input register space
 SERIAL_WORDS = 6
 
-# Runs of registers several components tile, pooled into one read. Reading a
-# member apart costs a request and isolates nothing: ``storage`` spans
-# 0x0200-0x0245, which holds every S/T phase and EPS register, and
-# ``pv_three_phase`` spans 0x0008-0x0020, which holds ``pv_common``'s two
-# temperatures. ``pv_single_phase`` stops at 0x001A, short of them, so it is
-# a failure domain of its own and stays out. The pool takes its first member's
-# place in the poll list, so a poll still walks the map front to back.
+# Runs several components tile; reading a member apart wastes a request
+# and isolates nothing. ``storage`` spans 0x0200-0x0245 (all S/T phase
+# and EPS registers); ``pv_three_phase`` spans 0x0008-0x0020, covering
+# ``pv_common``'s two temperatures. ``pv_single_phase`` stops short of
+# those, so it stays its own failure domain. Pooled entries take their
+# first member's poll-list slot, so a poll still walks front to back.
 _POOLS: dict[str, tuple[str, ...]] = {
     "storage_block": ("storage", "storage_three_phase", "storage_eps"),
     "pv_block": ("pv_common", "pv_three_phase"),
@@ -71,12 +70,7 @@ def identify(serial: str) -> InverterType:
 class SofarLegacyInverter:
     """An older Sofar inverter reached through a ``ModbusUnit``.
 
-    Reads the older register map: the 0x0000 block for PV-only inverters and the
-    0x0200 block for storage ones. This generation is read-only — the plugin
-    declares no writable register for it, so neither does this library.
-
-    ASCII framing over TCP is not supported. Build the unit from an RTU or
-    RTU-over-TCP connection.
+    Read-only: the plugin declares no writable register for it either.
     """
 
     def __init__(
@@ -101,7 +95,7 @@ class SofarLegacyInverter:
         self.hybrid_pv_2 = HybridPvString2(unit)
         self.battery_settings = AcBatterySettings(unit)
 
-        # Built by setup from whichever members this inverter serves; see _POOLS.
+        # Built by setup from the members this inverter serves; see _POOLS.
         self.storage_block: ComponentGroup | None = None
         self.pv_block: ComponentGroup | None = None
 
@@ -181,11 +175,7 @@ class SofarLegacyInverter:
     async def async_update(self) -> UpdateReport:
         """Refresh every sub-system this inverter serves, one at a time.
 
-        Same contract as :meth:`sofar_modbus.SofarInverter.async_update`: a
-        failed component keeps its previous values and is reported, listeners
-        fire after the whole poll and only for refreshed components, and a
-        dead link raises ``ModbusConnectionError`` — as does a timeout before
-        anything answered.
+        Same contract as ``SofarInverter``: a dead link raises.
         """
         if self._polled is None:
             await self._async_setup()
@@ -215,10 +205,7 @@ class SofarLegacyInverter:
     async def async_read_raw(self) -> dict[str, dict[int, int | bool]]:
         """Every register this inverter reads, undecoded — for diagnostics.
 
-        The serial number setup reads is ``identity``'s only field and identity
-        is polled, so the polled components already cover it. Blocks this
-        inverter does not serve stay out. Nothing notifies: a download is not a
-        poll. The first call sets the inverter up.
+        Nothing notifies here: a diagnostics download is not a poll.
         """
         if self._polled is None:
             await self._async_setup()
