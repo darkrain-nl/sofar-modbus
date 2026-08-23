@@ -70,7 +70,7 @@ def identify(serial: str) -> InverterType:
 class SofarLegacyInverter:
     """An older Sofar inverter reached through a ``ModbusUnit``.
 
-    Read-only: the plugin declares no writable register for it either.
+    Read-only, RTU only -- no writable registers, no ASCII over TCP.
     """
 
     def __init__(

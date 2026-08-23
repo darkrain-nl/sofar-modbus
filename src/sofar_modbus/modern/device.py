@@ -105,7 +105,7 @@ def identify(serial: str) -> tuple[InverterType, str | None]:
 class SofarInverter:
     """A current-generation Sofar inverter reached through a ``ModbusUnit``.
 
-    Unpolled components leave their fields ``None``; RTU only, no ASCII.
+    Build the unit from RTU -- ASCII framing over TCP is unsupported.
     """
 
     def __init__(
@@ -169,10 +169,7 @@ class SofarInverter:
         return self.inverter_type is not None and BAT_BTS in self.inverter_type
 
     async def _async_setup(self) -> None:
-        """Read the serial number, settle the model, and pick what to poll.
-
-        A failed setup leaves the device unset up; retried next update.
-        """
+        """Read the serial number, settle the model, and pick what to poll."""
         if self.serial_number is None:
             words = await self._unit.read_holding_registers(
                 SERIAL_REGISTER, SERIAL_WORDS
