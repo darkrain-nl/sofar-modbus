@@ -5,7 +5,13 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from modbus_connection import ModbusConnectionError, ModbusError, ModbusTimeoutError
+from modbus_connection import (
+    IllegalDataAddressError,
+    IllegalFunctionError,
+    ModbusConnectionError,
+    ModbusError,
+    ModbusTimeoutError,
+)
 from modbus_connection.decode import decode_string
 from modbus_connection.model import ComponentGroup
 
@@ -79,14 +85,10 @@ class SofarLegacyInverter:
         *,
         serial_number: str | None = None,
         inverter_type: InverterType | None = None,
-        read_eps: bool = False,
     ) -> None:
         self._unit = unit
-        self._options = EPS if read_eps else InverterType(0)
         self.serial_number = serial_number
-        self.inverter_type = (
-            inverter_type | self._options if inverter_type is not None else None
-        )
+        self.inverter_type = inverter_type
 
         self.identity = LegacyIdentity(unit)
         self.pv_common = PvCommon(unit)
@@ -119,9 +121,16 @@ class SofarLegacyInverter:
             # The plugin strips the punctuation these boards pad the field with.
             self.serial_number = re.sub(r"[^A-Za-z0-9 -]", "", decode_string(words))
         if self.inverter_type is None:
-            self.inverter_type = identify(self.serial_number) | self._options
+            self.inverter_type = identify(self.serial_number)
         inverter_type = self.inverter_type
         assert inverter_type is not None
+        if (
+            EPS not in inverter_type
+            and matches(inverter_type, self.storage_eps.applies_to & ~EPS)
+            and await self._async_probe_eps()
+        ):
+            inverter_type |= EPS
+            self.inverter_type = inverter_type
         served = [
             name
             for name in (
@@ -139,6 +148,14 @@ class SofarLegacyInverter:
             if matches(inverter_type, getattr(self, name).applies_to)
         ]
         self._polled = self._pool(served)
+
+    async def _async_probe_eps(self) -> bool:
+        """Whether this inverter answers the EPS registers."""
+        try:
+            await self.storage_eps.async_update(notify=False)
+        except (IllegalDataAddressError, IllegalFunctionError):
+            return False
+        return True
 
     def _pool(self, served: list[str]) -> list[str]:
         """The poll list, with each served run of _POOLS replaced by its group."""

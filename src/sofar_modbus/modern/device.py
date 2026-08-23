@@ -6,7 +6,13 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from modbus_connection import ModbusConnectionError, ModbusError, ModbusTimeoutError
+from modbus_connection import (
+    IllegalDataAddressError,
+    IllegalFunctionError,
+    ModbusConnectionError,
+    ModbusError,
+    ModbusTimeoutError,
+)
 from modbus_connection.decode import decode_string
 
 from ..model import SofarComponent, UpdateReport
@@ -104,7 +110,7 @@ class SofarInverter:
 
     The consumer owns the connection and hands over a unit::
 
-        inverter = SofarInverter(unit, read_eps=True)
+        inverter = SofarInverter(unit)
         await inverter.async_update()
         inverter.state.system_state
         inverter.grid.active_power_output_total
@@ -131,21 +137,20 @@ class SofarInverter:
         serial_number: str | None = None,
         model: str | None = None,
         inverter_type: InverterType | None = None,
-        read_eps: bool = False,
         read_pm: bool = False,
     ) -> None:
         """Set up the sub-systems.
 
-        ``read_eps`` and ``read_pm`` mirror the integration's options: the
-        off-grid and parallel-system registers are only read when asked for,
-        because an inverter without them refuses the blocks. ``serial_number``,
-        ``model`` and ``inverter_type`` allow callers that already know the device's
-        identity to pass them in and skip reading the serial number over Modbus.
+        ``read_pm`` mirrors the integration's option: parallel-system
+        registers are only read when asked for, because an inverter
+        without them refuses the block. EPS needs no such flag — setup
+        probes the off-grid block itself and leaves it out of the poll
+        when the inverter refuses it. ``serial_number``, ``model`` and
+        ``inverter_type`` let a caller who already knows the device's
+        identity skip reading the serial number over Modbus.
         """
         self._unit = unit
-        self._options = (EPS if read_eps else InverterType(0)) | (
-            PM if read_pm else InverterType(0)
-        )
+        self._options = PM if read_pm else InverterType(0)
         self.model = model
         self.serial_number = serial_number
         self.inverter_type = (
@@ -213,6 +218,13 @@ class SofarInverter:
                 self.model = model
         inverter_type = self.inverter_type
         assert inverter_type is not None
+        if (
+            EPS not in inverter_type
+            and matches(inverter_type, self.offgrid.applies_to & ~EPS)
+            and await self._async_probe_eps()
+        ):
+            inverter_type |= EPS
+            self.inverter_type = inverter_type
         self._readings = [
             name
             for name in (
@@ -253,6 +265,14 @@ class SofarInverter:
             )
             if matches(inverter_type, getattr(self, name).applies_to)
         ]
+
+    async def _async_probe_eps(self) -> bool:
+        """Whether this inverter answers the off-grid (EPS) block."""
+        try:
+            await self.offgrid.async_update(notify=False)
+        except (IllegalDataAddressError, IllegalFunctionError):
+            return False
+        return True
 
     def _notify(self, report: UpdateReport) -> None:
         """Fire listeners on every component that successfully refreshed."""

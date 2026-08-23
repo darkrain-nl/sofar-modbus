@@ -68,9 +68,6 @@ async def main() -> int:
         "--legacy", action="store_true", help="an older-generation inverter"
     )
     parser.add_argument(
-        "--eps", action="store_true", help="also read the off-grid (EPS) registers"
-    )
-    parser.add_argument(
         "--pm",
         action="store_true",
         help="also read the parallel-system registers (current generation only)",
@@ -87,9 +84,9 @@ async def main() -> int:
 
     counting = CountingUnit(connection.for_unit(args.unit))
     inverter: Inverter = (
-        SofarLegacyInverter(counting, read_eps=args.eps)
+        SofarLegacyInverter(counting)
         if args.legacy
-        else SofarInverter(counting, read_eps=args.eps, read_pm=args.pm)
+        else SofarInverter(counting, read_pm=args.pm)
     )
     try:
         report = await inverter.async_update()  # the first update sets the inverter up
