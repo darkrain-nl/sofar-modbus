@@ -70,6 +70,20 @@ async def test_setup_reads_the_serial_and_settles_the_model(
     assert hybrid.has_battery_tower is True
 
 
+async def test_component_names_are_empty_until_setup(
+    hybrid: SofarInverter,
+) -> None:
+    """Callers can see what a set-up inverter polls, per poll group."""
+    assert hybrid.readings_components == ()
+    assert hybrid.settings_components == ()
+
+    await hybrid.async_update()
+
+    assert "grid" in hybrid.readings_components
+    assert "feed_in" in hybrid.settings_components
+    assert not set(hybrid.readings_components) & set(hybrid.settings_components)
+
+
 async def test_readings_and_settings_polls_are_disjoint(
     hybrid: SofarInverter,
 ) -> None:
@@ -204,8 +218,8 @@ async def test_off_grid_three_phase(hybrid: SofarInverter) -> None:
     assert hybrid.offgrid.active_power_offgrid_total == pytest.approx(3.0)
     assert hybrid.offgrid_three_phase.offgrid_voltage_l1 == pytest.approx(229.5)
     assert hybrid.offgrid_three_phase.offgrid_voltage_l2 == pytest.approx(228.8)
-    # The single-phase layout overlaps the three-phase one at 0x050A; only the
-    # component matching this inverter's phase count is polled.
+    # The single-phase layout overlaps the three-phase one at 0x050A;
+    # only the component matching the phase count is polled.
     assert "offgrid_single_phase" not in report.updated
     assert hybrid.offgrid_single_phase.offgrid_voltage is None
 
@@ -287,7 +301,7 @@ async def test_settings(hybrid: SofarInverter) -> None:
     assert hybrid.passive.passive_mode_battery_power_max == 3000
 
 
-# --- writes -----------------------------------------------------------------
+# --- writes ---------------------------------------------------------
 
 
 async def test_write_charger_mode(
@@ -392,7 +406,7 @@ async def test_iv_curve_scan(
     assert [(e.address, e.values) for e in events] == [(0x1027, [1])]
 
 
-# --- the BTS battery tower ---------------------------------------------------
+# --- the BTS battery tower -------------------------------------------
 
 
 async def test_battery_pack_is_selected_then_read(

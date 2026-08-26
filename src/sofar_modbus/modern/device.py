@@ -168,6 +168,16 @@ class SofarInverter:
         """Whether this inverter reports a BTS battery tower."""
         return self.inverter_type is not None and BAT_BTS in self.inverter_type
 
+    @property
+    def settings_components(self) -> tuple[str, ...]:
+        """Settings component names this inverter polls; empty before setup."""
+        return tuple(self._settings or ())
+
+    @property
+    def readings_components(self) -> tuple[str, ...]:
+        """Reading component names this inverter polls; empty before setup."""
+        return tuple(self._readings or ())
+
     async def _async_setup(self) -> None:
         """Read the serial number, settle the model, and pick what to poll."""
         if self.serial_number is None:
