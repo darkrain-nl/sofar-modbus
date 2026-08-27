@@ -1,11 +1,4 @@
-"""Fixtures: Sofar inverters over modbus-connection's in-memory mock backend.
-
-The mock backend ships with ``modbus-connection`` as an auto-registered pytest
-plugin, so there is no server, socket or real backend here — just address-keyed
-stores loaded with Sofar-shaped register values. Everything on the current
-generation is a holding register; the older generation reports its serial number
-from the input-register space.
-"""
+"""Fixtures: Sofar inverters over the in-memory mock modbus backend."""
 
 from __future__ import annotations
 
@@ -40,7 +33,7 @@ def packed_timestamp(
     return [(raw >> 16) & 0xFFFF, raw & 0xFFFF]
 
 
-# A three-phase HYD hybrid: the serial that selects HYBRID | X3 | GEN | BAT_BTS.
+# A three-phase HYD hybrid, selecting HYBRID | X3 | GEN | BAT_BTS.
 HYBRID_SERIAL = "SP1ES12345678"
 
 MODERN_HOLDING: dict[int, int | list[int]] = {
@@ -48,10 +41,14 @@ MODERN_HOLDING: dict[int, int | list[int]] = {
     0x0404: 2,  # system state -> Grid-connected
     0x0405: 0,  # fault 1 -> none
     0x0409: 0x0030,  # fault 5 -> PV overvoltage (0x10) + battery over-voltage (0x20)
+    0x0411: 0x0001,  # fault 13 -> string fuse open 1-1
     0x0417: 30,  # waiting time -> 30 s
     0x0418: 45,  # inverter temperature 1
     0x041A: 52,  # heatsink temperature 1
     0x0420: 0xFFF6,  # module temperature 1 -> -10 (signed)
+    0x0432: 0x0001,  # fault 19 -> combiner overcurrent channel 17
+    0x0433: 7,  # fault 20 -> reserved, read as a raw integer
+    0x043D: 0x0001,  # fault 30 -> DCDC fault
     # -- identity: clock, serial, versions --
     0x042C: [25, 8, 12, 14, 30, 5],  # 2025-08-12 14:30:05
     0x0445: ascii_words(HYBRID_SERIAL, 7),

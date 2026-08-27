@@ -18,6 +18,9 @@ from sofar_modbus.modern import (
     EpsControlMode,
     Fault1,
     Fault5,
+    Fault13,
+    Fault19,
+    Fault30,
     FeedinLimitationMode,
     ParallelMasterslave,
     PassiveModeTimeoutAction,
@@ -129,6 +132,10 @@ async def test_state_and_faults(hybrid: SofarInverter) -> None:
         hybrid.state.fault_5
         == Fault5.ID069_PV_OVERVOLTAGE | Fault5.ID070_BATTERY_OVER_VOLTAGE
     )
+    assert hybrid.state.fault_13 == Fault13.ID193_STRING_FUSE_OPEN_1_1
+    assert hybrid.state.fault_19 == Fault19.ID289_COMBINER_OC_17
+    assert hybrid.state.fault_20 == 7  # reserved, no bits assigned
+    assert hybrid.state.fault_30 == Fault30.ID465_DCDC_FAULT
     assert hybrid.state.waiting_time == 30
     assert hybrid.state.inverter_temperature_1 == 45
     assert hybrid.state.module_temperature_1 == -10  # signed

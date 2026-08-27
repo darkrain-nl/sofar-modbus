@@ -1,9 +1,4 @@
-"""The current-generation Sofar register map (upstream ``plugin_sofar.py``).
-
-Covers the HYD hybrid and KTL-X / KTLM PV inverters that speak the 0x0400
-(state), 0x0500 (off-grid), 0x0580 (PV), 0x0600 (battery), 0x0680 (energy),
-0x1000 (settings) and 0x9000 (BTS battery tower) blocks.
-"""
+"""The current-generation Sofar register map: HYD hybrid, KTL-X/KTLM PV."""
 
 from .battery import BatteryStrings1To2, BatteryStrings3To8, BatteryTotals
 from .battery_pack import BatteryPack
@@ -26,6 +21,20 @@ from .enums import (
     Fault10,
     Fault11,
     Fault12,
+    Fault13,
+    Fault14,
+    Fault15,
+    Fault16,
+    Fault17,
+    Fault18,
+    Fault19,
+    Fault22,
+    Fault23,
+    Fault26,
+    Fault27,
+    Fault28,
+    Fault29,
+    Fault30,
     FeedinLimitationMode,
     ParallelMasterslave,
     PassiveModeTimeoutAction,
@@ -87,6 +96,20 @@ __all__ = [
     "Fault10",
     "Fault11",
     "Fault12",
+    "Fault13",
+    "Fault14",
+    "Fault15",
+    "Fault16",
+    "Fault17",
+    "Fault18",
+    "Fault19",
+    "Fault22",
+    "Fault23",
+    "Fault26",
+    "Fault27",
+    "Fault28",
+    "Fault29",
+    "Fault30",
     "FeedInLimit",
     "FeedinLimitationMode",
     "GridOutput",
