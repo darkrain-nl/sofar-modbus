@@ -1,10 +1,4 @@
-"""One failing block must not take the rest of the poll with it.
-
-The integration reads its blocks independently and tolerates a failure
-(``auto_block_ignore_readerror=True``): the failing block's sensors keep their
-last values while everything else refreshes. The library mirrors that at
-component granularity.
-"""
+"""One failing block never drags the rest of the poll down."""
 
 from __future__ import annotations
 
@@ -54,7 +48,7 @@ async def test_listeners_fire_at_the_end_and_only_for_fresh_components(
     mock_modbus_unit.read_events.clear()
     await hybrid.async_update()
 
-    # One notification, after the whole poll was tried; none for the failure.
+    # One notification after the whole poll; none for the failure.
     assert seen == [len(mock_modbus_unit.read_events)]
 
 
@@ -111,7 +105,7 @@ async def test_a_timeout_with_nothing_answered_is_fatal(
     with pytest.raises(ModbusTimeoutError):
         await hybrid.async_update()
 
-    # The first component is the probe: the poll gave up instead of walking on.
+    # The first component is the probe; the poll gives up, not walks on.
     assert len(mock_modbus_unit.read_events) == 1
 
 
@@ -146,10 +140,10 @@ async def test_legacy_fatal_timeout_matches_the_modern_contract(
 async def test_a_settings_poll_alone_gives_up_on_a_silent_inverter(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    """Nothing having answered yet is per poll: a settings poll pays one timeout."""
+    """Nothing answered yet is per-poll: a settings poll pays one timeout."""
     await hybrid.async_update()
 
-    mock_modbus_unit.fail_read(0x042C, ModbusTimeoutError("inverter asleep"))
+    mock_modbus_unit.fail_read(0x100A, ModbusTimeoutError("inverter asleep"))
     mock_modbus_unit.read_events.clear()
     with pytest.raises(ModbusTimeoutError):
         await hybrid.async_update_settings()
@@ -163,8 +157,8 @@ async def test_the_same_timeout_inside_a_full_update_is_contained(
     """The readings already answered, so the inverter is not silent after all."""
     await hybrid.async_update()
 
-    mock_modbus_unit.fail_read(0x042C, ModbusTimeoutError("slow identity block"))
+    mock_modbus_unit.fail_read(0x100A, ModbusTimeoutError("slow rtc_sync block"))
     report = await hybrid.async_update()
 
-    assert set(report.failed) == {"identity"}
+    assert set(report.failed) == {"rtc_sync"}
     assert "state" in report.updated

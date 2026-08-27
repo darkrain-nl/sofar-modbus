@@ -13,7 +13,6 @@ from modbus_connection import (
     ModbusError,
     ModbusTimeoutError,
 )
-from modbus_connection.decode import decode_string
 
 from ..model import SofarComponent, UpdateReport
 from ..variants import (
@@ -58,9 +57,6 @@ from .settings import (
 
 if TYPE_CHECKING:
     from modbus_connection import ModbusUnit
-
-SERIAL_REGISTER = 0x0445
-SERIAL_WORDS = 7
 
 _SET_TIME_REGISTER = 0x1004
 _IV_CURVE_SCAN_REGISTER = 0x1027
@@ -181,10 +177,9 @@ class SofarInverter:
     async def _async_setup(self) -> None:
         """Read the serial number, settle the model, and pick what to poll."""
         if self.serial_number is None:
-            words = await self._unit.read_holding_registers(
-                SERIAL_REGISTER, SERIAL_WORDS
-            )
-            self.serial_number = decode_string(words)
+            await self.identity.async_update(notify=False)
+            self.serial_number = self.identity.serial_number
+            assert self.serial_number is not None
         if self.inverter_type is None:
             detected, model = identify(self.serial_number)
             self.inverter_type = detected | self._options
@@ -228,7 +223,6 @@ class SofarInverter:
         self._settings = [
             name
             for name in (
-                "identity",
                 "rtc_sync",
                 "feed_in",
                 "eps",
@@ -325,7 +319,7 @@ class SofarInverter:
             await self._async_setup()
             assert self._readings is not None and self._settings is not None
         raw: dict[str, dict[int, int | bool]] = {}
-        for name in (*self._readings, *self._settings):
+        for name in ("identity", *self._readings, *self._settings):
             component: SofarComponent = getattr(self, name)
             for space, values in (await component.async_read_raw(notify=False)).items():
                 raw.setdefault(space, {}).update(values)

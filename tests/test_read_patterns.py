@@ -1,11 +1,4 @@
-"""What a poll actually asks the device for.
-
-The plugin builds its read blocks from a sorted register list, starting a new
-block whenever an entity is more than ``block_size`` past the block start or
-carries an explicit ``newblock``. These tests pin the equivalent here: blocks
-cover every field, never exceed the device's block size, and never cross a
-boundary the plugin declared.
-"""
+"""Pins the plugin's block-read boundaries: full coverage, no overrun."""
 
 from __future__ import annotations
 
@@ -89,7 +82,7 @@ async def test_a_poll_reads_every_field_of_every_polled_component(
 async def test_readings_and_settings_read_their_own_blocks(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    """Neither method touches the other's registers, and together they are the poll."""
+    """Readings and settings never share registers; together they're the poll."""
     await hybrid.async_update()
 
     mock_modbus_unit.read_events.clear()
@@ -108,21 +101,16 @@ async def test_readings_and_settings_read_their_own_blocks(
 
     assert readings.updated.isdisjoint(settings.updated)
     assert "energy" in readings.updated  # counters are measured, not configured
-    assert {"identity", "feed_in", "charger", "battery_config"} <= settings.updated
+    assert {"feed_in", "charger", "battery_config"} <= settings.updated
     # Nearly a quarter of the poll a caller need not pay for every cycle.
     assert sum(count for _, count in reading_blocks) == 211
-    assert sum(count for _, count in setting_blocks) == 65
+    assert sum(count for _, count in setting_blocks) == 45
 
 
 async def test_a_poll_reads_nothing_no_component_asked_for(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    """Over-reading is bounded: only inside a block a component's own plan spans.
-
-    A Sofar refuses registers it does not implement, so a read must not wander
-    into a region no polled component claims. Every address read here is either
-    a field or a hole inside one component's own span.
-    """
+    """A Sofar refuses unclaimed registers, so blocks stay inside owned spans."""
     blocks = await poll(hybrid, mock_modbus_unit)
     report = await hybrid.async_update()
     spans = [
@@ -147,11 +135,7 @@ async def test_no_block_exceeds_the_devices_block_size(
 async def test_each_battery_string_is_read_in_a_block_of_its_own(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    """The plugin marks every string a new block, so a missing one is isolated.
-
-    Eight strings of seven registers, back to back: without the declared ranges
-    they would pool into two reads and one absent string would fail both.
-    """
+    """Each string is its own block, so one missing string fails alone."""
     blocks = await poll(hybrid, mock_modbus_unit)
     battery = [b for b in blocks if 0x0604 <= b.address <= 0x063B]
     assert [(b.address, b.count) for b in battery] == [
@@ -164,7 +148,7 @@ async def test_each_battery_string_is_read_in_a_block_of_its_own(
 async def test_the_battery_config_blocks_stay_apart(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    """0x1044 and 0x1048 both start a block upstream; a read never bridges them."""
+    """0x1044 and 0x1048 both start blocks upstream; reads never bridge them."""
     blocks = await poll(hybrid, mock_modbus_unit)
     config = [(b.address, b.count) for b in blocks if 0x1044 <= b.address <= 0x105A]
     assert config == [(0x1044, 4), (0x1048, 19)]
@@ -205,13 +189,7 @@ async def test_the_extra_mppt_strings_are_only_read_where_they_exist(
 async def test_upstreams_duplicate_pv_power_6_address_is_preserved(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    """String 6's power sits on string 6's current register, as upstream has it.
-
-    Every other string is (voltage, current, power) on consecutive registers, so
-    0x0595 looks like the intended address — but the plugin reads 0x0594, and a
-    device library that silently moved it would report a different register's
-    value. 0x0595 is therefore never read.
-    """
+    """String 6's power aliases its current register; 0x0595 stays unread."""
     from sofar_modbus.modern import PvStrings5To6
 
     fields = PvStrings5To6.declared_fields
@@ -227,13 +205,13 @@ async def test_upstreams_duplicate_pv_power_6_address_is_preserved(
     assert inverter.pv_5_6.pv_current_6 == inverter.pv_5_6.pv_power_6 == 2.5
 
 
-# --- the older generation ----------------------------------------------------
+# --- the older generation ---------------------------------------------
 
 
 async def test_legacy_storage_reads_one_block_plus_the_pv_strings(
     legacy_hybrid: SofarLegacyInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    """The 0x0250 strings are their own blocks; upstream marks both ``newblock``."""
+    """0x0250 strings are separate blocks; upstream marks both newblock."""
     await legacy_hybrid.async_update()
     mock_modbus_unit.read_events.clear()
     await legacy_hybrid.async_update()
@@ -261,9 +239,7 @@ async def test_legacy_three_phase_pv_reads_only_the_0x0000_block(
     blocks = [
         (b.register_type, b.address, b.count) for b in mock_modbus_unit.read_events
     ]
-    # PvCommon's temperatures (0x1B/0x1C) fall inside ThreePhasePv's span, where
-    # upstream aliases them, so the two pool into the one block that spanned
-    # both anyway: three reads become one, over the same 0x0000-0x0020.
+    # PvCommon's temps fall inside ThreePhasePv's span; blocks pool to one.
     assert blocks == [
         ("input", 0x2002, 6),
         ("holding", 0x0000, 33),
@@ -309,7 +285,7 @@ async def test_raw_dump_covers_every_polled_component(hybrid: SofarInverter) -> 
         missing = field_addresses(component) - dumped
         assert not missing, f"{name} missed {sorted(missing)}"
         assert component._parent is None
-    # The tower serves one selected pack at a time; async_read_pack() reads it.
+    # The tower serves one pack at a time; async_read_pack() reads it.
     assert not dumped & field_addresses(hybrid.battery_pack)
 
 
