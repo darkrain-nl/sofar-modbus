@@ -45,7 +45,9 @@ MODERN_HOLDING: dict[int, int | list[int]] = {
     0x0417: 30,  # waiting time -> 30 s
     0x0418: 45,  # inverter temperature 1
     0x041A: 52,  # heatsink temperature 1
+    0x041F: 48,  # heatsink temperature 6
     0x0420: 0xFFF6,  # module temperature 1 -> -10 (signed)
+    0x0422: 33,  # module temperature 3
     0x0432: 0x0001,  # fault 19 -> combiner overcurrent channel 17
     0x0433: 7,  # fault 20 -> reserved, read as a raw integer
     0x043D: 0x0001,  # fault 30 -> DCDC fault

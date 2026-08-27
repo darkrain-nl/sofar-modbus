@@ -138,7 +138,9 @@ async def test_state_and_faults(hybrid: SofarInverter) -> None:
     assert hybrid.state.fault_30 == Fault30.ID465_DCDC_FAULT
     assert hybrid.state.waiting_time == 30
     assert hybrid.state.inverter_temperature_1 == 45
+    assert hybrid.state.heatsink_temperature_6 == 48
     assert hybrid.state.module_temperature_1 == -10  # signed
+    assert hybrid.state.module_temperature_3 == 33
 
 
 async def test_identity_and_clock(hybrid: SofarInverter) -> None:

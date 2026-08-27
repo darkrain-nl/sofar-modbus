@@ -68,8 +68,13 @@ class InverterState(SofarComponent):
     inverter_temperature_2 = integer(0x0419, signed=True, unit="°C")
     heatsink_temperature_1 = integer(0x041A, signed=True, unit="°C")
     heatsink_temperature_2 = integer(0x041B, signed=True, unit="°C")
+    heatsink_temperature_3 = integer(0x041C, signed=True, unit="°C")
+    heatsink_temperature_4 = integer(0x041D, signed=True, unit="°C")
+    heatsink_temperature_5 = integer(0x041E, signed=True, unit="°C")
+    heatsink_temperature_6 = integer(0x041F, signed=True, unit="°C")
     module_temperature_1 = integer(0x0420, signed=True, unit="°C")
     module_temperature_2 = integer(0x0421, signed=True, unit="°C")
+    module_temperature_3 = integer(0x0422, signed=True, unit="°C")
     fault_19 = flags(0x0432, Fault19, signed=False)
     fault_20 = integer(0x0433, signed=False)  # reserved, no bits assigned
     fault_21 = integer(0x0434, signed=False)  # reserved, no bits assigned
