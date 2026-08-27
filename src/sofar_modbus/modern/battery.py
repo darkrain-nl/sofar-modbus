@@ -1,4 +1,4 @@
-"""Battery strings — the 0x0600 register block, one readable block per string."""
+"""Battery strings, the 0x0600 block, one readable block per string."""
 
 from __future__ import annotations
 
@@ -95,3 +95,4 @@ class BatteryTotals(SofarComponent):
     battery_power_total = gauge(0x0667, 0.1, signed=True, unit="kW")
     battery_capacity_total = integer(0x0668, signed=False, unit="%")
     battery_state_of_health_total = integer(0x0669, signed=False, unit="%")
+    current_battery_num = integer(0x066A, signed=False)

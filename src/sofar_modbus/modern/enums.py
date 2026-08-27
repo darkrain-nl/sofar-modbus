@@ -16,6 +16,8 @@ class SystemState(IntEnum):
     PERMANENT_FAULT = 5
     UPGRADING = 6
     SELF_CHARGING = 7
+    SVG_STATE = 8
+    PID_STATE = 9
 
 
 class Fault1(IntFlag):

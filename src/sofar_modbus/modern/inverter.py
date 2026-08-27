@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from modbus_connection.model import enum, flags, gauge, integer, string
+from modbus_connection.model import enum, flags, gauge, integer, string, uint32
 
 from ..model import SofarComponent
 from ..variants import HYBRID, PV
@@ -40,7 +40,7 @@ from .enums import (
 
 
 class InverterState(SofarComponent):
-    """Run state, fault bitmaps and internal temperatures."""
+    """Run state, fault bitmaps, temperatures and lifetime counters."""
 
     applies_to = PV | HYBRID
 
@@ -75,6 +75,10 @@ class InverterState(SofarComponent):
     module_temperature_1 = integer(0x0420, signed=True, unit="°C")
     module_temperature_2 = integer(0x0421, signed=True, unit="°C")
     module_temperature_3 = integer(0x0422, signed=True, unit="°C")
+    generation_time_today = integer(0x0426, signed=False, unit="min")
+    generation_time_total = uint32(0x0427, unit="min")
+    service_time_total = uint32(0x0429, unit="min")
+    insulation_resistance = integer(0x042B, signed=False, unit="kΩ")
     fault_19 = flags(0x0432, Fault19, signed=False)
     fault_20 = integer(0x0433, signed=False)  # reserved, no bits assigned
     fault_21 = integer(0x0434, signed=False)  # reserved, no bits assigned
@@ -136,6 +140,8 @@ class GridOutput(SofarComponent):
     active_power_pcc_total = gauge(0x0488, 0.01, signed=True, unit="kW")
     reactive_power_pcc_total = gauge(0x0489, 0.01, signed=True, unit="kvar")
     apparent_power_pcc_total = gauge(0x048A, 0.01, signed=True, unit="kVA")
+    active_power_pcc_total_wide = gauge(0x048B, 0.1, signed=True, unit="kW")
+    """Same reading as active_power_pcc_total, at a scale that won't overflow."""
     voltage_l1 = gauge(0x048D, 0.1, signed=False, unit="V")
     current_output_l1 = gauge(0x048E, 0.01, signed=False, unit="A")
     active_power_output_l1 = gauge(0x048F, 0.01, signed=True, unit="kW")
@@ -178,3 +184,4 @@ class GridOutput(SofarComponent):
     voltage_line_l1 = gauge(0x04BA, 0.1, signed=False, unit="V")
     voltage_line_l2 = gauge(0x04BB, 0.1, signed=False, unit="V")
     voltage_line_l3 = gauge(0x04BC, 0.1, signed=False, unit="V")
+    power_factor_output_total = gauge(0x04BD, 0.001, signed=True)

@@ -141,6 +141,10 @@ async def test_state_and_faults(hybrid: SofarInverter) -> None:
     assert hybrid.state.heatsink_temperature_6 == 48
     assert hybrid.state.module_temperature_1 == -10  # signed
     assert hybrid.state.module_temperature_3 == 33
+    assert hybrid.state.generation_time_today == 15
+    assert hybrid.state.generation_time_total == 100
+    assert hybrid.state.service_time_total == 200
+    assert hybrid.state.insulation_resistance == 500
 
 
 async def test_identity_and_clock(hybrid: SofarInverter) -> None:
@@ -171,6 +175,8 @@ async def test_grid_output(hybrid: SofarInverter) -> None:
     assert grid.current_output_l1 == pytest.approx(5.43)
     assert grid.power_factor_output_l1 == pytest.approx(0.998)
     assert grid.voltage_line_l3 == pytest.approx(398.1)
+    assert grid.active_power_pcc_total_wide == pytest.approx(2.0)
+    assert grid.power_factor_output_total == pytest.approx(0.995)
 
 
 async def test_the_eps_probe_detects_presence(
@@ -273,6 +279,7 @@ async def test_battery_strings_and_totals(hybrid: SofarInverter) -> None:
     assert hybrid.battery_3_8.battery_voltage_3 == pytest.approx(204.0)
     assert hybrid.battery_totals.battery_power_total == pytest.approx(-6.0)
     assert hybrid.battery_totals.battery_capacity_total == 87
+    assert hybrid.battery_totals.current_battery_num == 2
 
 
 async def test_energy_counters(hybrid: SofarInverter) -> None:
