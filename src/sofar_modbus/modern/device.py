@@ -41,6 +41,7 @@ from .pv import (
     PvStrings7To8,
     PvStrings9To10,
 )
+from .rating import InverterRating
 from .settings import (
     ActivePowerControl,
     BatteryActiveControl,
@@ -126,6 +127,7 @@ class SofarInverter:
         )
 
         self.state = InverterState(unit)
+        self.rating = InverterRating(unit)
         self.identity = Identity(unit)
         self.grid = GridOutput(unit)
         self.offgrid = OffGridTotals(unit)
@@ -176,6 +178,7 @@ class SofarInverter:
 
     async def _async_setup(self) -> None:
         """Read the serial number, settle the model, and pick what to poll."""
+        await self.rating.async_update(notify=False)
         if self.serial_number is None:
             await self.identity.async_update(notify=False)
             self.serial_number = self.identity.serial_number
@@ -319,7 +322,7 @@ class SofarInverter:
             await self._async_setup()
             assert self._readings is not None and self._settings is not None
         raw: dict[str, dict[int, int | bool]] = {}
-        for name in ("identity", *self._readings, *self._settings):
+        for name in ("identity", "rating", *self._readings, *self._settings):
             component: SofarComponent = getattr(self, name)
             for space, values in (await component.async_read_raw(notify=False)).items():
                 raw.setdefault(space, {}).update(values)
