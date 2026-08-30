@@ -103,7 +103,7 @@ async def test_readings_and_settings_read_their_own_blocks(
     assert "energy" in readings.updated  # counters are measured, not configured
     assert {"feed_in", "charger", "battery_config"} <= settings.updated
     # Nearly a quarter of the poll a caller need not pay for every cycle.
-    assert sum(count for _, count in reading_blocks) == 212
+    assert sum(count for _, count in reading_blocks) == 211
     assert sum(count for _, count in setting_blocks) == 45
 
 
