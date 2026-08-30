@@ -219,10 +219,9 @@ async def test_legacy_storage_reads_one_block_plus_the_pv_strings(
         (b.register_type, b.address, b.count) for b in mock_modbus_unit.read_events
     ]
     assert blocks == [
-        ("input", 0x2002, 6),  # serial number
         # Storage and its EPS output pool: EPS's 0x0216/0x0217 sit inside the
         # storage block, so a separate read of them fetched nothing new and
-        # protected nothing — storage's own bridge already spans them.
+        # protected nothing: storage's own bridge already spans them.
         ("holding", 0x0200, 70),  # the whole storage block, EPS included
         ("holding", 0x0250, 3),
         ("holding", 0x0253, 3),
@@ -241,7 +240,6 @@ async def test_legacy_three_phase_pv_reads_only_the_0x0000_block(
     ]
     # PvCommon's temps fall inside ThreePhasePv's span; blocks pool to one.
     assert blocks == [
-        ("input", 0x2002, 6),
         ("holding", 0x0000, 33),
     ]
 

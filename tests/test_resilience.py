@@ -127,9 +127,7 @@ async def test_legacy_fatal_timeout_matches_the_modern_contract(
 ) -> None:
     await legacy_hybrid.async_update()
 
-    mock_modbus_unit.fail_read(
-        0x2002, ModbusTimeoutError("inverter asleep"), register_type="input"
-    )
+    mock_modbus_unit.fail_read(0x0200, ModbusTimeoutError("inverter asleep"))
     mock_modbus_unit.read_events.clear()
     with pytest.raises(ModbusTimeoutError):
         await legacy_hybrid.async_update()
