@@ -134,6 +134,11 @@ async def test_state_and_faults(hybrid: SofarInverter) -> None:
     assert hybrid.state.module_temperature_1 == -10  # signed
 
 
+async def test_rated_power(hybrid: SofarInverter) -> None:
+    await hybrid.async_update()
+    assert hybrid.rating.rated_power == pytest.approx(15.0)
+
+
 async def test_identity_and_clock(hybrid: SofarInverter) -> None:
     await hybrid.async_update()
     assert hybrid.identity.serial_number == HYBRID_SERIAL

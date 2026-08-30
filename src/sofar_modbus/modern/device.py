@@ -41,6 +41,7 @@ from .pv import (
     PvStrings7To8,
     PvStrings9To10,
 )
+from .rating import InverterRating
 from .settings import (
     ActivePowerControl,
     BatteryActiveControl,
@@ -126,6 +127,7 @@ class SofarInverter:
         )
 
         self.state = InverterState(unit)
+        self.rating = InverterRating(unit)
         self.identity = Identity(unit)
         self.grid = GridOutput(unit)
         self.offgrid = OffGridTotals(unit)
@@ -202,6 +204,7 @@ class SofarInverter:
             name
             for name in (
                 "state",
+                "rating",
                 "grid",
                 "offgrid",
                 "offgrid_single_phase",
