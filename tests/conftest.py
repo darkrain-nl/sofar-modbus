@@ -1,4 +1,4 @@
-"""Fixtures: Sofar inverters over the in-memory mock modbus backend."""
+"""Fixtures: Sofar inverters on modbus-connection's in-memory mock backend."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def packed_timestamp(
     return [(raw >> 16) & 0xFFFF, raw & 0xFFFF]
 
 
-# A three-phase HYD hybrid, selecting HYBRID | X3 | GEN | BAT_BTS.
+# A three-phase HYD hybrid: selects HYBRID | X3 | GEN | BAT_BTS.
 HYBRID_SERIAL = "SP1ES12345678"
 
 MODERN_HOLDING: dict[int, int | list[int]] = {
@@ -103,6 +103,8 @@ MODERN_HOLDING: dict[int, int | list[int]] = {
     0x0686: [0x0001, 0x86A0],  # solar generation total -> 10000.0 kWh
     0x0688: [0, 987],  # load consumption today -> 9.87 kWh
     0x0694: [0, 550],  # battery charge today -> 5.50 kWh
+    # -- rating --
+    0x06ED: 150,  # rated power -> 15.0 kW
     # -- settings --
     0x100A: 0,  # last clock write -> Successful
     0x1023: 1,  # feed-in limitation -> Enabled

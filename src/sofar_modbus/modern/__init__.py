@@ -1,4 +1,4 @@
-"""The current-generation Sofar register map: HYD hybrid, KTL-X/KTLM PV."""
+"""Current-generation Sofar register map (upstream ``plugin_sofar.py``)."""
 
 from .battery import BatteryStrings1To2, BatteryStrings3To8, BatteryTotals
 from .battery_pack import BatteryPack
@@ -53,6 +53,7 @@ from .pv import (
     PvStrings7To8,
     PvStrings9To10,
 )
+from .rating import InverterRating
 from .settings import (
     ActivePowerControl,
     BatteryActiveControl,
@@ -114,6 +115,7 @@ __all__ = [
     "FeedinLimitationMode",
     "GridOutput",
     "Identity",
+    "InverterRating",
     "InverterState",
     "OffGridSinglePhase",
     "OffGridThreePhase",
