@@ -12,7 +12,6 @@ from modbus_connection import (
     ModbusError,
     ModbusTimeoutError,
 )
-from modbus_connection.decode import decode_string
 from modbus_connection.model import ComponentGroup
 
 from ..model import SofarLegacyComponent, UpdateReport
@@ -23,9 +22,6 @@ from .storage import AcBatterySettings, Storage, StorageEps, StorageThreePhase
 
 if TYPE_CHECKING:
     from modbus_connection import ModbusUnit
-
-SERIAL_REGISTER = 0x2002  # input register space
-SERIAL_WORDS = 6
 
 # Runs several components tile; reading a member apart wastes a request
 # and isolates nothing. ``storage`` spans 0x0200-0x0245 (all S/T phase
@@ -111,9 +107,11 @@ class SofarLegacyInverter:
     async def _async_setup(self) -> None:
         """Read the serial number, settle the model, and pick what to poll."""
         if self.serial_number is None:
-            words = await self._unit.read_input_registers(SERIAL_REGISTER, SERIAL_WORDS)
+            await self.identity.async_update(notify=False)
+            raw = self.identity.serial_number
+            assert raw is not None
             # The plugin strips the punctuation these boards pad the field with.
-            self.serial_number = re.sub(r"[^A-Za-z0-9 -]", "", decode_string(words))
+            self.serial_number = re.sub(r"[^A-Za-z0-9 -]", "", raw)
         if self.inverter_type is None:
             self.inverter_type = identify(self.serial_number)
         inverter_type = self.inverter_type
@@ -128,7 +126,6 @@ class SofarLegacyInverter:
         served = [
             name
             for name in (
-                "identity",
                 "pv_common",
                 "pv_single_phase",
                 "pv_three_phase",
@@ -203,7 +200,7 @@ class SofarLegacyInverter:
         return UpdateReport(updated, failed)
 
     async def async_read_raw(self) -> dict[str, dict[int, int | bool]]:
-        """Every register this inverter reads, undecoded — for diagnostics.
+        """Every register this inverter reads, undecoded, for diagnostics.
 
         Nothing notifies here: a diagnostics download is not a poll.
         """
@@ -211,7 +208,7 @@ class SofarLegacyInverter:
             await self._async_setup()
             assert self._polled is not None
         raw: dict[str, dict[int, int | bool]] = {}
-        for name in self._polled:
+        for name in ("identity", *self._polled):
             target: SofarLegacyComponent | ComponentGroup = getattr(self, name)
             for space, values in (await target.async_read_raw(notify=False)).items():
                 raw.setdefault(space, {}).update(values)
