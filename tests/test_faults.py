@@ -80,7 +80,7 @@ async def test_active_faults_span_subsystems(
     assert {(fault.key, fault.category) for fault in hybrid.state.active_faults} == {
         ("grid_over_voltage", FaultCategory.GRID),
         ("forced_shutdown", FaultCategory.SHUTDOWN),
-        ("fan_1_failure", FaultCategory.FAN),
+        ("fan_1_fault", FaultCategory.FAN),
         ("bms_high_temperature_protection", FaultCategory.BATTERY),
     }
 

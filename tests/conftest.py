@@ -41,7 +41,7 @@ MODERN_HOLDING: dict[int, int | list[int]] = {
     0x0404: 2,  # system state -> Grid-connected
     0x0405: 0,  # fault 1 -> none
     0x0409: 0x0030,  # fault 5 -> PV overvoltage (0x10) + battery over-voltage (0x20)
-    0x0411: 0x0001,  # fault 13 -> string fuse open 1-1
+    0x0411: 0x0001,  # fault 13 -> string fuse open circuit 1-1
     0x0417: 30,  # waiting time -> 30 s
     0x0418: 45,  # inverter temperature 1
     0x041A: 52,  # heatsink temperature 1

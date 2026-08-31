@@ -132,7 +132,7 @@ async def test_state_and_faults(hybrid: SofarInverter) -> None:
         hybrid.state.fault_5
         == Fault5.ID069_PV_OVERVOLTAGE | Fault5.ID070_BATTERY_OVER_VOLTAGE
     )
-    assert hybrid.state.fault_13 == Fault13.ID193_STRING_FUSE_OPEN_1_1
+    assert hybrid.state.fault_13 == Fault13.ID193_STRING_FUSE_OPEN_CIRCUIT_1_1
     assert hybrid.state.fault_19 == Fault19.ID289_COMBINER_OC_17
     assert hybrid.state.fault_20 == 7  # reserved, no bits assigned
     assert hybrid.state.fault_30 == Fault30.ID465_DCDC_FAULT
@@ -148,7 +148,7 @@ async def test_state_and_faults(hybrid: SofarInverter) -> None:
     assert {fault.key for fault in hybrid.state.active_faults} == {
         "pv_overvoltage",
         "battery_over_voltage",
-        "string_fuse_open_1_1",
+        "string_fuse_open_circuit_1_1",
         "combiner_oc_17",
         "dcdc_fault",
     }
