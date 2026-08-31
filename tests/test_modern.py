@@ -145,6 +145,13 @@ async def test_state_and_faults(hybrid: SofarInverter) -> None:
     assert hybrid.state.generation_time_total == 100
     assert hybrid.state.service_time_total == 200
     assert hybrid.state.insulation_resistance == 500
+    assert {fault.key for fault in hybrid.state.active_faults} == {
+        "pv_overvoltage",
+        "battery_over_voltage",
+        "string_fuse_open_1_1",
+        "combiner_oc_17",
+        "dcdc_fault",
+    }
 
 
 async def test_rated_power(hybrid: SofarInverter) -> None:

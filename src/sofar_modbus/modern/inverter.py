@@ -8,6 +8,7 @@ from modbus_connection.model import enum, flags, gauge, integer, string, uint32
 
 from ..model import SofarComponent
 from ..variants import HYBRID, PV
+from . import enums
 from .enums import (
     Fault1,
     Fault2,
@@ -37,6 +38,27 @@ from .enums import (
     Fault30,
     SystemState,
 )
+from .faults import FAULTS_BY_ID, Fault
+
+# Registers 20, 21, 24 and 25 are reserved with no bits assigned.
+_FAULT_REGISTERS = (*range(1, 20), 22, 23, 26, 27, 28, 29, 30)
+
+
+def _fault_for(member_name: str) -> Fault | None:
+    """The fault an ``ID001_GRID_OVER_VOLTAGE``-style member stands for."""
+    return FAULTS_BY_ID.get(int(member_name.removeprefix("ID").split("_", 1)[0]))
+
+
+# IntFlag members hash by value, so bits from different registers
+# collide as dict keys; the register number keys the outer lookup.
+_REGISTER_FAULTS: dict[int, dict[int, Fault]] = {
+    number: {
+        member.value: fault
+        for member in getattr(enums, f"Fault{number}")
+        if (fault := _fault_for(member.name)) is not None
+    }
+    for number in _FAULT_REGISTERS
+}
 
 
 class InverterState(SofarComponent):
@@ -91,6 +113,17 @@ class InverterState(SofarComponent):
     fault_28 = flags(0x043B, Fault28, signed=False)
     fault_29 = flags(0x043C, Fault29, signed=False)
     fault_30 = flags(0x043D, Fault30, signed=False)
+
+    @property
+    def active_faults(self) -> frozenset[Fault]:
+        """Every fault the inverter currently reports."""
+        return frozenset(
+            fault
+            for number in _FAULT_REGISTERS
+            if (value := getattr(self, f"fault_{number}")) is not None
+            for member in value
+            if (fault := _REGISTER_FAULTS[number].get(member.value)) is not None
+        )
 
 
 class Identity(SofarComponent):
