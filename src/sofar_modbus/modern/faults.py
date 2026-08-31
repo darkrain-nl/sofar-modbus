@@ -23,7 +23,6 @@ class FaultCategory(StrEnum):
     INSULATION = "insulation"
     INTERNAL = "internal"
     PV = "pv"
-    SAMPLING = "sampling"
     SHUTDOWN = "shutdown"
     STRING_FUSE = "string_fuse"
     THERMAL = "thermal"
@@ -55,22 +54,22 @@ FAULTS: tuple[Fault, ...] = (
     Fault(14, "grid_voltage_unbalance", FaultCategory.GRID),
     Fault(15, "inverter_transient_overvoltage", FaultCategory.GRID),
     Fault(16, "sudden_grid_phase_change", FaultCategory.GRID),
-    Fault(17, "grid_current_sampling_error", FaultCategory.SAMPLING),
-    Fault(18, "dci_sampling_error_ac", FaultCategory.SAMPLING),
-    Fault(19, "network_voltage_sampling_error_dc", FaultCategory.SAMPLING),
-    Fault(20, "network_voltage_sampling_error_ac", FaultCategory.SAMPLING),
-    Fault(21, "gfci_sampling_error_dc", FaultCategory.SAMPLING),
-    Fault(22, "gfci_sampling_error_ac", FaultCategory.SAMPLING),
-    Fault(23, "dcv_sampling_error", FaultCategory.SAMPLING),
-    Fault(24, "input_current_sampling_error", FaultCategory.SAMPLING),
-    Fault(25, "dci_sampling_error_dc", FaultCategory.SAMPLING),
-    Fault(26, "branch_current_sampling_error", FaultCategory.SAMPLING),
-    Fault(27, "pv_low_impedance_to_ground", FaultCategory.SAMPLING),
-    Fault(28, "pid_abnormal_output", FaultCategory.SAMPLING),
-    Fault(29, "leakage_current_consistency_error", FaultCategory.SAMPLING),
-    Fault(30, "net_voltage_consistency_error", FaultCategory.SAMPLING),
-    Fault(31, "dci_consistency_error", FaultCategory.SAMPLING),
-    Fault(32, "neutral_ground_fault", FaultCategory.SAMPLING),
+    Fault(17, "grid_current_sampling_error", FaultCategory.INTERNAL),
+    Fault(18, "dci_sampling_error_ac", FaultCategory.INTERNAL),
+    Fault(19, "network_voltage_sampling_error_dc", FaultCategory.INTERNAL),
+    Fault(20, "network_voltage_sampling_error_ac", FaultCategory.INTERNAL),
+    Fault(21, "gfci_sampling_error_dc", FaultCategory.INTERNAL),
+    Fault(22, "gfci_sampling_error_ac", FaultCategory.INTERNAL),
+    Fault(23, "dcv_sampling_error", FaultCategory.INTERNAL),
+    Fault(24, "input_current_sampling_error", FaultCategory.INTERNAL),
+    Fault(25, "dci_sampling_error_dc", FaultCategory.INTERNAL),
+    Fault(26, "branch_current_sampling_error", FaultCategory.INTERNAL),
+    Fault(27, "pv_low_impedance_to_ground", FaultCategory.INTERNAL),
+    Fault(28, "pid_abnormal_output", FaultCategory.INTERNAL),
+    Fault(29, "leakage_current_consistency_error", FaultCategory.INTERNAL),
+    Fault(30, "net_voltage_consistency_error", FaultCategory.INTERNAL),
+    Fault(31, "dci_consistency_error", FaultCategory.INTERNAL),
+    Fault(32, "neutral_ground_fault", FaultCategory.INTERNAL),
     Fault(33, "spi_communication_error_dc", FaultCategory.INTERNAL),
     Fault(34, "spi_communication_error_ac", FaultCategory.INTERNAL),
     Fault(35, "chip_error_dc", FaultCategory.INTERNAL),

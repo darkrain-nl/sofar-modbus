@@ -104,7 +104,7 @@ if any(fault.category is FaultCategory.BATTERY for fault in faults):
 ```
 
 Each `Fault` carries the vendor's ID, a stable snake_case `key`, and one of the
-18 `FaultCategory` members. `FAULTS` is the full table of the 353 faults the
+17 `FaultCategory` members. `FAULTS` is the full table of the 353 faults the
 register map defines, and `FAULTS_BY_ID` indexes it. A register that has not
 been read yet contributes nothing, so `active_faults` never reports a fault the
 inverter did not actually answer for.

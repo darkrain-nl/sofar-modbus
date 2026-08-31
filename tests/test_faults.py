@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import collections
+
 from modbus_connection.mock import MockModbusUnit
 
 from sofar_modbus import SofarInverter
@@ -22,7 +24,30 @@ def test_table_is_complete() -> None:
     assert len({fault.id for fault in FAULTS}) == 353
     assert len({fault.key for fault in FAULTS}) == 353
     assert FAULTS_BY_ID == {fault.id: fault for fault in FAULTS}
-    assert len(FaultCategory) == 18
+    assert len(FaultCategory) == 17
+
+
+def test_categories_hold_the_bits_they_were_assigned() -> None:
+    # The vendor spec defines no categories, so each count is a choice.
+    assert collections.Counter(fault.category for fault in FAULTS) == {
+        FaultCategory.COMBINER_BOX: 96,
+        FaultCategory.INTERNAL: 42,
+        FaultCategory.ARC_FAULT: 34,
+        FaultCategory.STRING_FUSE: 32,
+        FaultCategory.BATTERY: 24,
+        FaultCategory.GRID: 20,
+        FaultCategory.INPUT_FUSE: 16,
+        FaultCategory.PV: 14,
+        FaultCategory.THERMAL: 14,
+        FaultCategory.DC_BUS: 14,
+        FaultCategory.COMMUNICATION: 12,
+        FaultCategory.AC_OUTPUT: 10,
+        FaultCategory.FAN: 7,
+        FaultCategory.DERATING: 6,
+        FaultCategory.INSULATION: 4,
+        FaultCategory.BATTERY_PACK: 4,
+        FaultCategory.SHUTDOWN: 4,
+    }
 
 
 def test_every_fault_is_reachable_from_exactly_one_bit() -> None:
