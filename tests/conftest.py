@@ -41,10 +41,20 @@ MODERN_HOLDING: dict[int, int | list[int]] = {
     0x0404: 2,  # system state -> Grid-connected
     0x0405: 0,  # fault 1 -> none
     0x0409: 0x0030,  # fault 5 -> PV overvoltage (0x10) + battery over-voltage (0x20)
+    0x0411: 0x0001,  # fault 13 -> string fuse open 1-1
     0x0417: 30,  # waiting time -> 30 s
     0x0418: 45,  # inverter temperature 1
     0x041A: 52,  # heatsink temperature 1
+    0x041F: 48,  # heatsink temperature 6
     0x0420: 0xFFF6,  # module temperature 1 -> -10 (signed)
+    0x0422: 33,  # module temperature 3
+    0x0426: 15,  # generation time today -> 15 min
+    0x0427: [0, 100],  # generation time total -> 100 min
+    0x0429: [0, 200],  # service time total -> 200 min
+    0x042B: 500,  # insulation resistance -> 500 kOhm
+    0x0432: 0x0001,  # fault 19 -> combiner overcurrent channel 17
+    0x0433: 7,  # fault 20 -> reserved, read as a raw integer
+    0x043D: 0x0001,  # fault 30 -> DCDC fault
     # -- identity: clock, serial, versions --
     0x042C: [25, 8, 12, 14, 30, 5],  # 2025-08-12 14:30:05
     0x0445: ascii_words(HYBRID_SERIAL, 7),
@@ -56,6 +66,8 @@ MODERN_HOLDING: dict[int, int | list[int]] = {
     0x0486: 0xFF9C,  # reactive power output total -> -1.00 kvar (signed)
     0x0487: 1250,  # apparent power output total -> 12.50 kVA
     0x0488: 200,  # active power PCC total -> 2.00 kW
+    0x048B: 20,  # active power PCC total (0.1 kW scale) -> 2.0 kW
+    0x04BD: 995,  # overall power factor -> 0.995
     0x048D: 2301,  # voltage L1 -> 230.1 V
     0x048E: 543,  # current output L1 -> 5.43 A
     0x0491: 998,  # power factor output L1 -> 0.998
@@ -84,6 +96,7 @@ MODERN_HOLDING: dict[int, int | list[int]] = {
     0x060B: 2044,  # battery voltage 2 -> 204.4 V
     0x0612: 2040,  # battery voltage 3 -> 204.0 V
     0x0667: 0xFFC4,  # battery power total -> -6.0 kW (signed)
+    0x066A: 2,  # number of battery strings currently connected
     0x0668: 87,  # battery capacity total
     # -- energy counters --
     0x0684: [0, 1234],  # solar generation today -> 12.34 kWh (uint32)

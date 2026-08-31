@@ -18,6 +18,9 @@ from sofar_modbus.modern import (
     EpsControlMode,
     Fault1,
     Fault5,
+    Fault13,
+    Fault19,
+    Fault30,
     FeedinLimitationMode,
     ParallelMasterslave,
     PassiveModeTimeoutAction,
@@ -129,9 +132,19 @@ async def test_state_and_faults(hybrid: SofarInverter) -> None:
         hybrid.state.fault_5
         == Fault5.ID069_PV_OVERVOLTAGE | Fault5.ID070_BATTERY_OVER_VOLTAGE
     )
+    assert hybrid.state.fault_13 == Fault13.ID193_STRING_FUSE_OPEN_1_1
+    assert hybrid.state.fault_19 == Fault19.ID289_COMBINER_OC_17
+    assert hybrid.state.fault_20 == 7  # reserved, no bits assigned
+    assert hybrid.state.fault_30 == Fault30.ID465_DCDC_FAULT
     assert hybrid.state.waiting_time == 30
     assert hybrid.state.inverter_temperature_1 == 45
+    assert hybrid.state.heatsink_temperature_6 == 48
     assert hybrid.state.module_temperature_1 == -10  # signed
+    assert hybrid.state.module_temperature_3 == 33
+    assert hybrid.state.generation_time_today == 15
+    assert hybrid.state.generation_time_total == 100
+    assert hybrid.state.service_time_total == 200
+    assert hybrid.state.insulation_resistance == 500
 
 
 async def test_rated_power(hybrid: SofarInverter) -> None:
@@ -176,6 +189,8 @@ async def test_grid_output(hybrid: SofarInverter) -> None:
     assert grid.current_output_l1 == pytest.approx(5.43)
     assert grid.power_factor_output_l1 == pytest.approx(0.998)
     assert grid.voltage_line_l3 == pytest.approx(398.1)
+    assert grid.active_power_pcc_total_wide == pytest.approx(2.0)
+    assert grid.power_factor_output_total == pytest.approx(0.995)
 
 
 async def test_the_eps_probe_detects_presence(
@@ -278,6 +293,7 @@ async def test_battery_strings_and_totals(hybrid: SofarInverter) -> None:
     assert hybrid.battery_3_8.battery_voltage_3 == pytest.approx(204.0)
     assert hybrid.battery_totals.battery_power_total == pytest.approx(-6.0)
     assert hybrid.battery_totals.battery_capacity_total == 87
+    assert hybrid.battery_totals.current_battery_num == 2
 
 
 async def test_energy_counters(hybrid: SofarInverter) -> None:

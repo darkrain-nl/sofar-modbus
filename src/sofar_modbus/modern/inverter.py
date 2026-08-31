@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from modbus_connection.model import enum, flags, gauge, integer, string
+from modbus_connection.model import enum, flags, gauge, integer, string, uint32
 
 from ..model import SofarComponent
 from ..variants import HYBRID, PV
@@ -21,12 +21,26 @@ from .enums import (
     Fault10,
     Fault11,
     Fault12,
+    Fault13,
+    Fault14,
+    Fault15,
+    Fault16,
+    Fault17,
+    Fault18,
+    Fault19,
+    Fault22,
+    Fault23,
+    Fault26,
+    Fault27,
+    Fault28,
+    Fault29,
+    Fault30,
     SystemState,
 )
 
 
 class InverterState(SofarComponent):
-    """Run state, fault bitmaps and internal temperatures."""
+    """Run state, fault bitmaps, temperatures and lifetime counters."""
 
     applies_to = PV | HYBRID
 
@@ -43,13 +57,40 @@ class InverterState(SofarComponent):
     fault_10 = flags(0x040E, Fault10, signed=False)
     fault_11 = flags(0x040F, Fault11, signed=False)
     fault_12 = flags(0x0410, Fault12, signed=False)
+    fault_13 = flags(0x0411, Fault13, signed=False)
+    fault_14 = flags(0x0412, Fault14, signed=False)
+    fault_15 = flags(0x0413, Fault15, signed=False)
+    fault_16 = flags(0x0414, Fault16, signed=False)
+    fault_17 = flags(0x0415, Fault17, signed=False)
+    fault_18 = flags(0x0416, Fault18, signed=False)
     waiting_time = integer(0x0417, signed=True, unit="s")
     inverter_temperature_1 = integer(0x0418, signed=True, unit="°C")
     inverter_temperature_2 = integer(0x0419, signed=True, unit="°C")
     heatsink_temperature_1 = integer(0x041A, signed=True, unit="°C")
     heatsink_temperature_2 = integer(0x041B, signed=True, unit="°C")
+    heatsink_temperature_3 = integer(0x041C, signed=True, unit="°C")
+    heatsink_temperature_4 = integer(0x041D, signed=True, unit="°C")
+    heatsink_temperature_5 = integer(0x041E, signed=True, unit="°C")
+    heatsink_temperature_6 = integer(0x041F, signed=True, unit="°C")
     module_temperature_1 = integer(0x0420, signed=True, unit="°C")
     module_temperature_2 = integer(0x0421, signed=True, unit="°C")
+    module_temperature_3 = integer(0x0422, signed=True, unit="°C")
+    generation_time_today = integer(0x0426, signed=False, unit="min")
+    generation_time_total = uint32(0x0427, unit="min")
+    service_time_total = uint32(0x0429, unit="min")
+    insulation_resistance = integer(0x042B, signed=False, unit="kΩ")
+    fault_19 = flags(0x0432, Fault19, signed=False)
+    fault_20 = integer(0x0433, signed=False)  # reserved, no bits assigned
+    fault_21 = integer(0x0434, signed=False)  # reserved, no bits assigned
+    fault_22 = flags(0x0435, Fault22, signed=False)
+    fault_23 = flags(0x0436, Fault23, signed=False)
+    fault_24 = integer(0x0437, signed=False)  # reserved, no bits assigned
+    fault_25 = integer(0x0438, signed=False)  # reserved, no bits assigned
+    fault_26 = flags(0x0439, Fault26, signed=False)
+    fault_27 = flags(0x043A, Fault27, signed=False)
+    fault_28 = flags(0x043B, Fault28, signed=False)
+    fault_29 = flags(0x043C, Fault29, signed=False)
+    fault_30 = flags(0x043D, Fault30, signed=False)
 
 
 class Identity(SofarComponent):
@@ -99,6 +140,8 @@ class GridOutput(SofarComponent):
     active_power_pcc_total = gauge(0x0488, 0.01, signed=True, unit="kW")
     reactive_power_pcc_total = gauge(0x0489, 0.01, signed=True, unit="kvar")
     apparent_power_pcc_total = gauge(0x048A, 0.01, signed=True, unit="kVA")
+    active_power_pcc_total_wide = gauge(0x048B, 0.1, signed=True, unit="kW")
+    """Same reading as active_power_pcc_total, at a scale that won't overflow."""
     voltage_l1 = gauge(0x048D, 0.1, signed=False, unit="V")
     current_output_l1 = gauge(0x048E, 0.01, signed=False, unit="A")
     active_power_output_l1 = gauge(0x048F, 0.01, signed=True, unit="kW")
@@ -141,3 +184,4 @@ class GridOutput(SofarComponent):
     voltage_line_l1 = gauge(0x04BA, 0.1, signed=False, unit="V")
     voltage_line_l2 = gauge(0x04BB, 0.1, signed=False, unit="V")
     voltage_line_l3 = gauge(0x04BC, 0.1, signed=False, unit="V")
+    power_factor_output_total = gauge(0x04BD, 0.001, signed=True)

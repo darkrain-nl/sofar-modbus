@@ -1,9 +1,4 @@
-"""A BTS battery tower's packs — the 0x9000 register block.
-
-The tower multiplexes every pack onto one register block: writing the pack you
-want to the BMS inquiry register switches the block over, so packs are read one
-at a time rather than polled together.
-"""
+"""A BTS battery tower's packs, the 0x9000 block, one pack read at a time."""
 
 from __future__ import annotations
 
@@ -89,11 +84,7 @@ class BatteryPack(SofarComponent):
             return None
 
     async def async_select(self, string_nr: int, pack_nr: int) -> None:
-        """Point the block at one pack, by writing the BMS inquiry register.
-
-        The tower needs a moment to switch over; ``pack_id`` reads back the
-        selection, so a caller can confirm it before trusting the values.
-        """
+        """Point the block at one pack; confirm the switch via ``pack_id``."""
         await self._unit.write_register(
             _BMS_INQUIRE_REGISTER, (pack_nr & 0xFF) << 8 | (string_nr & 0xFF)
         )
