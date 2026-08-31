@@ -82,6 +82,33 @@ for name, error in report.failed.items():
     print(f"{name} kept its previous values: {error}")
 ```
 
+### Faults are grouped by subsystem, not by register
+
+The inverter reports faults as 26 bitmask registers, `state.fault_1` through
+`state.fault_30`. A register is wire format: `fault_11` happens to hold four
+shutdown bits and seven fan bits, and battery faults are spread over nine
+different registers. Several bits are set at once, so no single one of them is
+"the" fault.
+
+`state.active_faults` decodes the lot into the subsystem each bit belongs to:
+
+```python
+from sofar_modbus.modern import FaultCategory
+
+faults = inverter.state.active_faults
+for fault in faults:
+    print(fault.id, fault.key, fault.category)
+
+if any(fault.category is FaultCategory.BATTERY for fault in faults):
+    print("something is wrong with the battery")
+```
+
+Each `Fault` carries the vendor's ID, a stable snake_case `key`, and one of the
+17 `FaultCategory` members. `FAULTS` is the full table of the 353 faults the
+register map defines, and `FAULTS_BY_ID` indexes it. A register that has not
+been read yet contributes nothing, so `active_faults` never reports a fault the
+inverter did not actually answer for.
+
 ### Measurements and settings refresh separately
 
 `SofarInverter` splits its poll by what it reads:

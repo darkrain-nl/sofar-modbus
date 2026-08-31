@@ -43,6 +43,7 @@ from .enums import (
     SyncRtcResult,
     SystemState,
 )
+from .faults import FAULTS, FAULTS_BY_ID, Fault, FaultCategory
 from .inverter import GridOutput, Identity, InverterState
 from .offgrid import OffGridSinglePhase, OffGridThreePhase, OffGridTotals
 from .pv import (
@@ -69,6 +70,8 @@ from .settings import (
 )
 
 __all__ = [
+    "FAULTS",
+    "FAULTS_BY_ID",
     "ActivePowerControl",
     "BatConfigCellType",
     "BatConfigProtocol",
@@ -85,6 +88,7 @@ __all__ = [
     "EnergyTotals",
     "EpsControl",
     "EpsControlMode",
+    "Fault",
     "Fault1",
     "Fault2",
     "Fault3",
@@ -111,6 +115,7 @@ __all__ = [
     "Fault28",
     "Fault29",
     "Fault30",
+    "FaultCategory",
     "FeedInLimit",
     "FeedinLimitationMode",
     "GridOutput",
