@@ -139,6 +139,15 @@ async def test_rated_power(hybrid: SofarInverter) -> None:
     assert hybrid.rating.rated_power == pytest.approx(15.0)
 
 
+async def test_rated_power_zero_is_unavailable(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A raw 0 is not a real nameplate rating; it decodes as unknown."""
+    mock_modbus_unit.holding[0x06ED] = 0
+    await hybrid.rating.async_update()
+    assert hybrid.rating.rated_power is None
+
+
 async def test_identity_and_clock(hybrid: SofarInverter) -> None:
     await hybrid.async_update()
     assert hybrid.identity.serial_number == HYBRID_SERIAL
