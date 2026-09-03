@@ -328,12 +328,12 @@ class SofarInverter:
                 raw.setdefault(space, {}).update(values)
         return raw
 
-    async def async_read_pack(self, string_nr: int, pack_nr: int) -> BatteryPack:
+    async def async_read_pack(self, pack_nr: int, group_nr: int = 0) -> BatteryPack:
         """Select a BTS pack and read it.
 
         Check ``pack_id``: a not-yet-switched tower still answers.
         """
-        await self.battery_pack.async_select(string_nr, pack_nr)
+        await self.battery_pack.async_select(pack_nr, group_nr)
         await self.battery_pack.async_update()
         return self.battery_pack
 
