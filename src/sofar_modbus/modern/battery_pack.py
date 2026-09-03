@@ -9,7 +9,8 @@ from modbus_connection.model import bits, gauge, integer, string, uint32
 from ..model import SofarComponent
 from ..variants import BAT_BTS
 
-_BMS_INQUIRE_REGISTER = 0x9020  # write-only: selects which pack 0x9044+ reports
+_BMS_INQUIRE_REGISTER = 0x9020  # selects which pack 0x9044+ reports
+_PACK_ID_REGISTER = 0x9044  # which pack it reports right now
 
 
 class BatteryPack(SofarComponent):
@@ -20,7 +21,7 @@ class BatteryPack(SofarComponent):
         (0x9007, 0x900A),
         (0x900B, 0x9013),
         (0x9044, 0x9046),
-        (0x9048, 0x9074),
+        (0x9048, 0x907C),
     )
 
     pack_model = string(0x9007, 4)
@@ -54,6 +55,14 @@ class BatteryPack(SofarComponent):
     cell_14_voltage = gauge(0x905E, 0.001, signed=False, unit="V")
     cell_15_voltage = gauge(0x905F, 0.001, signed=False, unit="V")
     cell_16_voltage = gauge(0x9060, 0.001, signed=False, unit="V")
+    cell_17_voltage = gauge(0x9061, 0.001, signed=False, unit="V")
+    cell_18_voltage = gauge(0x9062, 0.001, signed=False, unit="V")
+    cell_19_voltage = gauge(0x9063, 0.001, signed=False, unit="V")
+    cell_20_voltage = gauge(0x9064, 0.001, signed=False, unit="V")
+    cell_21_voltage = gauge(0x9065, 0.001, signed=False, unit="V")
+    cell_22_voltage = gauge(0x9066, 0.001, signed=False, unit="V")
+    cell_23_voltage = gauge(0x9067, 0.001, signed=False, unit="V")
+    cell_24_voltage = gauge(0x9068, 0.001, signed=False, unit="V")
     cell_max_voltage = gauge(0x9069, 0.001, signed=False, unit="V")
     cell_min_voltage = gauge(0x906A, 0.001, signed=False, unit="V")
     pack_temperature_1 = gauge(0x906B, 0.1, signed=True, unit="°C")
@@ -66,6 +75,18 @@ class BatteryPack(SofarComponent):
     pack_remaining_capacity = gauge(0x9072, 0.1, signed=False, unit="Ah")
     pack_full_charge_capacity = gauge(0x9073, 0.1, signed=False, unit="Ah")
     pack_cycles = integer(0x9074, signed=False)
+    cell_balancing = integer(0x9075, signed=False)
+    """Which cells are balancing: bit 0 is cell 1, bit 15 cell 16."""
+    # The vendor publishes no bit meanings for these three status words.
+    pack_alarm_state = integer(0x9076, signed=False)
+    pack_protect_state = integer(0x9077, signed=False)
+    pack_fault_state = integer(0x9078, signed=False)
+    pack_total_voltage = gauge(0x9079, 0.1, signed=False, unit="V")
+    pack_soc = integer(0x907A, signed=False, unit="%")
+    packs_in_group = integer(0x907B, signed=False)
+    """How many packs this pack's group holds."""
+    cells_in_pack = integer(0x907C, signed=False)
+    """How many cells this pack has in series."""
 
     @property
     def pack_time(self) -> datetime | None:
@@ -85,6 +106,9 @@ class BatteryPack(SofarComponent):
 
     async def async_select(self, string_nr: int, pack_nr: int) -> None:
         """Point the block at one pack; confirm the switch via ``pack_id``."""
-        await self._unit.write_register(
-            _BMS_INQUIRE_REGISTER, (pack_nr & 0xFF) << 8 | (string_nr & 0xFF)
-        )
+        selection = (pack_nr & 0xFF) << 8 | (string_nr & 0xFF)
+        current = await self._unit.read_holding_registers(_PACK_ID_REGISTER, 1)
+        # Some towers reject the write yet already serve the wanted pack.
+        if current[0] & 0x0FFF == selection & 0x0FFF:
+            return
+        await self._unit.write_register(_BMS_INQUIRE_REGISTER, selection)
