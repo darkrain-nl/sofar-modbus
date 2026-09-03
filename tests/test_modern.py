@@ -462,9 +462,16 @@ async def test_battery_pack_is_selected_then_read(
     assert pack.pack_serial_number == "BTSPACK000000001"
     assert pack.cell_1_voltage == pytest.approx(3.3)
     assert pack.cell_16_voltage == pytest.approx(3.298)
+    assert pack.cell_17_voltage == pytest.approx(3.301)
+    assert pack.cell_24_voltage == pytest.approx(3.299)
     assert pack.pack_temperature_1 == pytest.approx(24.5)
     assert pack.pack_remaining_capacity == pytest.approx(100.0)
     assert pack.pack_time == datetime(2025, 8, 12, 14, 30, 5)
+    assert pack.cell_balancing == 0b101
+    assert pack.pack_total_voltage == pytest.approx(51.2)
+    assert pack.pack_soc == 87
+    assert pack.packs_in_group == 3
+    assert pack.cells_in_pack == 24
 
 
 async def test_the_battery_tower_is_never_part_of_a_poll(

@@ -145,12 +145,19 @@ BATTERY_PACK_HOLDING: dict[int, int | list[int]] = {
     0x9048: ascii_words("BTSPACK000000001", 9),
     0x9051: 3300,  # cell 1 -> 3.300 V
     0x9060: 3298,  # cell 16 -> 3.298 V
+    0x9061: 3301,  # cell 17 -> 3.301 V
+    0x9068: 3299,  # cell 24 -> 3.299 V
     0x9069: 3305,  # cell max
     0x906A: 3295,  # cell min
     0x906B: 245,  # pack temperature 1 -> 24.5 °C
     0x9071: 0xFFCE,  # pack current -> -5.0 A
     0x9072: 1000,  # remaining capacity -> 100.0 Ah
     0x9074: 137,  # cycles
+    0x9075: 0b101,  # cells 1 and 3 balancing
+    0x9079: 512,  # pack total voltage -> 51.2 V
+    0x907A: 87,  # pack SOC
+    0x907B: 3,  # packs in this group
+    0x907C: 24,  # cells in this pack
 }
 
 LEGACY_HYBRID_SERIAL = "SM1E1234567890"
