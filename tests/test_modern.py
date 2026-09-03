@@ -474,6 +474,17 @@ async def test_battery_pack_is_selected_then_read(
     assert pack.cells_in_pack == 24
 
 
+async def test_selecting_the_pack_already_served_writes_nothing(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A tower may reject 0x9020 while already serving the wanted pack."""
+    writes: list[WriteEvent] = []
+    mock_modbus_unit.on_write(writes.append)
+    pack = await hybrid.async_read_pack(string_nr=0, pack_nr=0)
+    assert writes == []
+    assert pack.pack_id == 0
+
+
 async def test_the_battery_tower_is_never_part_of_a_poll(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:

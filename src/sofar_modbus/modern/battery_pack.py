@@ -9,7 +9,8 @@ from modbus_connection.model import bits, gauge, integer, string, uint32
 from ..model import SofarComponent
 from ..variants import BAT_BTS
 
-_BMS_INQUIRE_REGISTER = 0x9020  # write-only: selects which pack 0x9044+ reports
+_BMS_INQUIRE_REGISTER = 0x9020  # selects which pack 0x9044+ reports
+_PACK_ID_REGISTER = 0x9044  # which pack it reports right now
 
 
 class BatteryPack(SofarComponent):
@@ -105,6 +106,9 @@ class BatteryPack(SofarComponent):
 
     async def async_select(self, string_nr: int, pack_nr: int) -> None:
         """Point the block at one pack; confirm the switch via ``pack_id``."""
-        await self._unit.write_register(
-            _BMS_INQUIRE_REGISTER, (pack_nr & 0xFF) << 8 | (string_nr & 0xFF)
-        )
+        selection = (pack_nr & 0xFF) << 8 | (string_nr & 0xFF)
+        current = await self._unit.read_holding_registers(_PACK_ID_REGISTER, 1)
+        # Some towers reject the write yet already serve the wanted pack.
+        if current[0] & 0x0FFF == selection & 0x0FFF:
+            return
+        await self._unit.write_register(_BMS_INQUIRE_REGISTER, selection)

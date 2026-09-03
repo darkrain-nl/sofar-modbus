@@ -167,6 +167,9 @@ if inverter.has_battery_tower:
     print(pack.pack_serial_number, pack.soc, pack.cell_1_voltage)
 ```
 
+Asking for the pack a tower already serves writes nothing to the selection
+register, so a tower that rejects that register still reports its current pack.
+
 For an issue report, `async_read_raw()` dumps every register the inverter reads
 undecoded, keyed by address space and address — every block a poll covers, for
 the sub-systems this model serves. It fires no update listeners — a download is
