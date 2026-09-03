@@ -451,11 +451,11 @@ async def test_battery_pack_is_selected_then_read(
 ) -> None:
     writes: list[WriteEvent] = []
     mock_modbus_unit.on_write(writes.append)
-    pack = await hybrid.async_read_pack(string_nr=1, pack_nr=2)
+    pack = await hybrid.async_read_pack(pack_nr=1, group_nr=2)
     assert [(e.address, e.values) for e in writes] == [(0x9020, [(2 << 8) | 1])]
     assert pack.pack_model == "BTS5K"
-    assert pack.string_count == 2
-    assert pack.packs_per_string == 3
+    assert pack.series_cell_count == 24
+    assert pack.parallel_group_count == 3
     assert pack.total_voltage == pytest.approx(51.2)
     assert pack.total_current == pytest.approx(-5.0)
     assert pack.soc == 88
@@ -480,9 +480,19 @@ async def test_selecting_the_pack_already_served_writes_nothing(
     """A tower may reject 0x9020 while already serving the wanted pack."""
     writes: list[WriteEvent] = []
     mock_modbus_unit.on_write(writes.append)
-    pack = await hybrid.async_read_pack(string_nr=0, pack_nr=0)
+    pack = await hybrid.async_read_pack(pack_nr=0)
     assert writes == []
     assert pack.pack_id == 0
+
+
+async def test_selecting_outside_the_addressable_range_is_refused(
+    hybrid: SofarInverter,
+) -> None:
+    """The inquiry word gives pack and group four bits each, not eight."""
+    with pytest.raises(ValueError, match="battery pack 16 is outside 0-15"):
+        await hybrid.async_read_pack(pack_nr=16)
+    with pytest.raises(ValueError, match="battery group 16 is outside 0-15"):
+        await hybrid.async_read_pack(pack_nr=0, group_nr=16)
 
 
 async def test_the_battery_tower_is_never_part_of_a_poll(

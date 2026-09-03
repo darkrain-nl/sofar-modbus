@@ -130,17 +130,17 @@ MODERN_HOLDING: dict[int, int | list[int]] = {
     0x118B: [0, 3000],  # passive battery power max -> 3000 W
 }
 
-# A BTS battery tower: two strings of three packs, pack 0/0 selected.
+# A BTS battery tower: three parallel groups of 24-cell packs, pack 0/0.
 BATTERY_PACK_HOLDING: dict[int, int | list[int]] = {
     0x9007: ascii_words("BTS5K", 4),
     0x900B: 102,  # BMS version
-    0x900D: (3 << 8) | 2,  # 3 packs per string, 2 strings
+    0x900D: (3 << 8) | 24,  # 3 parallel groups, 24 cells in series
     0x900E: 95,  # realtime capacity
     0x900F: 512,  # total voltage -> 51.2 V
     0x9010: 0xFFCE,  # total current -> -5.0 A (signed)
     0x9012: 88,  # SOC
     0x9013: 99,  # SOH
-    0x9044: 0,  # pack id -> string 0, pack 0
+    0x9044: 0,  # pack id -> group 0, pack 0
     0x9045: packed_timestamp(25, 8, 12, 14, 30, 5),  # 2025-08-12 14:30:05
     0x9048: ascii_words("BTSPACK000000001", 9),
     0x9051: 3300,  # cell 1 -> 3.300 V

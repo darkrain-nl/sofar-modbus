@@ -26,17 +26,17 @@ class BatteryPack(SofarComponent):
 
     pack_model = string(0x9007, 4)
     bms_version = integer(0x900B, signed=False)
-    string_count = bits(0x900D, 0, 8)
-    """How many battery strings the tower has (low byte of 0x900D)."""
-    packs_per_string = bits(0x900D, 8, 8)
-    """How many packs each string has (high byte of 0x900D)."""
+    series_cell_count = bits(0x900D, 0, 8)
+    """Cells in series across the packs (low byte of 0x900D)."""
+    parallel_group_count = bits(0x900D, 8, 8)
+    """Battery groups running in parallel (high byte of 0x900D)."""
     realtime_capacity = integer(0x900E, signed=False, unit="%")
     total_voltage = gauge(0x900F, 0.1, signed=False, unit="V")
     total_current = gauge(0x9010, 0.1, signed=True, unit="A")
     soc = integer(0x9012, signed=False, unit="%")
     soh = integer(0x9013, signed=False, unit="%")
     pack_id = integer(0x9044, signed=False)
-    """Which pack the block currently reports: faults<<12 | pack<<8 | string."""
+    """Which pack the block currently reports: group<<8 | pack."""
     _pack_time_raw = uint32(0x9045)
     pack_serial_number = string(0x9048, 9)
     cell_1_voltage = gauge(0x9051, 0.001, signed=False, unit="V")
@@ -104,11 +104,14 @@ class BatteryPack(SofarComponent):
         except ValueError:  # an unset clock reports out-of-range parts
             return None
 
-    async def async_select(self, string_nr: int, pack_nr: int) -> None:
+    async def async_select(self, pack_nr: int, group_nr: int = 0) -> None:
         """Point the block at one pack; confirm the switch via ``pack_id``."""
-        selection = (pack_nr & 0xFF) << 8 | (string_nr & 0xFF)
+        for name, value in (("pack", pack_nr), ("group", group_nr)):
+            if not 0 <= value <= 15:
+                raise ValueError(f"battery {name} {value} is outside 0-15")
+        selection = group_nr << 8 | pack_nr
         current = await self._unit.read_holding_registers(_PACK_ID_REGISTER, 1)
         # Some towers reject the write yet already serve the wanted pack.
-        if current[0] & 0x0FFF == selection & 0x0FFF:
+        if current[0] & 0x0FFF == selection:
             return
         await self._unit.write_register(_BMS_INQUIRE_REGISTER, selection)

@@ -163,9 +163,16 @@ read one at a time rather than polled:
 
 ```python
 if inverter.has_battery_tower:
-    pack = await inverter.async_read_pack(string_nr=0, pack_nr=0)
+    pack = await inverter.async_read_pack(pack_nr=0)
     print(pack.pack_serial_number, pack.soc, pack.cell_1_voltage)
 ```
+
+How many packs there are to read is `parallel_group_count`, the high byte of
+0x900D. Its low byte is `series_cell_count`, how many cells a pack has in
+series, which is not a second dimension to iterate: a tower of four 16-cell
+packs reports 0x0410, and reading that as four packs of sixteen asks for 64
+packs that do not exist. Once a pack answers, `packs_in_group` and
+`cells_in_pack` confirm both counts from the pack's own registers.
 
 Asking for the pack a tower already serves writes nothing to the selection
 register, so a tower that rejects that register still reports its current pack.
