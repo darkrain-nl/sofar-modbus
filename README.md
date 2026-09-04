@@ -216,6 +216,7 @@ The register maps are derived from
 library keeps that project's field keys, scale factors, units and per-model
 filtering, and is released under the same licence.
 
-Where upstream declares two entities on one register, or the same key twice,
-this library keeps both rather than picking a winner — the docstring on each
-field carries upstream's name, and the tests spell out the cases.
+Where upstream declares the same key twice, this library keeps both fields and
+the docstring on each carries upstream's name. Addresses follow the
+manufacturer's protocol spec where the two disagree: PV string 6's power is read
+at 0x0595, not aliased onto string 6's current register as upstream has it.

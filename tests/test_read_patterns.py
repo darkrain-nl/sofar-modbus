@@ -4,11 +4,21 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+import pytest
 from modbus_connection.mock import MockModbusUnit, ReadEvent
 
 from sofar_modbus import SofarInverter, SofarLegacyInverter
 from sofar_modbus.model import SofarLegacyComponent
-from sofar_modbus.modern import BatteryStrings1To2, BatteryStrings3To8
+from sofar_modbus.modern import (
+    BatteryStrings1To2,
+    BatteryStrings3To8,
+    PvString3,
+    PvString4,
+    PvStrings1To2,
+    PvStrings5To6,
+    PvStrings7To8,
+    PvStrings9To10,
+)
 from sofar_modbus.variants import AC, X1, matches
 
 from .conftest import LEGACY_HOLDING, MODERN_HOLDING, ascii_words
@@ -177,7 +187,7 @@ async def test_the_extra_mppt_strings_are_only_read_where_they_exist(
     mock_modbus_unit.holding[0x0445] = ascii_words("SQ1ES1000001", 7)  # MPPT10
     ten = SofarInverter(mock_modbus_unit)
     ten_blocks = await poll(ten, mock_modbus_unit)
-    assert covered(ten_blocks) >= set(range(0x0584, 0x05A2)) - {0x0595}
+    assert covered(ten_blocks) >= set(range(0x0584, 0x05A2))
 
     mock_modbus_unit.read_events.clear()
     mock_modbus_unit.holding[0x0445] = ascii_words("SH3E000001", 7)  # two MPPTs
@@ -186,23 +196,38 @@ async def test_the_extra_mppt_strings_are_only_read_where_they_exist(
     assert not any(0x058A <= address <= 0x05A1 for address in covered(two_blocks))
 
 
-async def test_upstreams_duplicate_pv_power_6_address_is_preserved(
+def test_every_pv_string_sits_on_the_specs_stride() -> None:
+    """G3 spec: voltage 0x0584, current 0x0585, power 0x0586, 3 apart."""
+    bases = {"pv_voltage": 0x0584, "pv_current": 0x0585, "pv_power": 0x0586}
+    for component in (
+        PvStrings1To2,
+        PvString3,
+        PvString4,
+        PvStrings5To6,
+        PvStrings7To8,
+        PvStrings9To10,
+    ):
+        for name, field in component.declared_fields.items():
+            if name == "pv_power_total":
+                continue  # the one PV field outside the per-string run
+            measurement, _, number = name.rpartition("_")
+            expected = bases[measurement] + 3 * (int(number) - 1)
+            assert field.address == expected, name
+
+
+async def test_pv_string_6_power_reads_its_own_register(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    """String 6's power aliases its current register; 0x0595 stays unread."""
-    from sofar_modbus.modern import PvStrings5To6
-
-    fields = PvStrings5To6.declared_fields
-    assert fields["pv_current_6"].address == 0x0594
-    assert fields["pv_power_6"].address == 0x0594
-
+    """Upstream aliases string 6's power onto its current; the spec does not."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     mock_modbus_unit.holding[0x0445] = ascii_words("SQ1ES1000001", 7)
-    mock_modbus_unit.holding[0x0594] = 250
+    mock_modbus_unit.holding[0x0594] = 250  # PV current 6 -> 2.5 A
+    mock_modbus_unit.holding[0x0595] = 810  # PV power 6 -> 8.1 kW
     inverter = SofarInverter(mock_modbus_unit)
     blocks = await poll(inverter, mock_modbus_unit)
-    assert 0x0595 not in covered(blocks)
-    assert inverter.pv_5_6.pv_current_6 == inverter.pv_5_6.pv_power_6 == 2.5
+    assert 0x0595 in covered(blocks)
+    assert inverter.pv_5_6.pv_current_6 == pytest.approx(2.5)
+    assert inverter.pv_5_6.pv_power_6 == pytest.approx(8.1)
 
 
 # --- the older generation ---------------------------------------------

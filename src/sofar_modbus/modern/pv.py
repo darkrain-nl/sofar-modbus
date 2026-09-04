@@ -52,7 +52,7 @@ class PvStrings5To6(SofarComponent):
     pv_power_5 = gauge(0x0592, 0.01, signed=False, unit="kW")
     pv_voltage_6 = gauge(0x0593, 0.1, signed=False, unit="V")
     pv_current_6 = gauge(0x0594, 0.01, signed=False, unit="A")
-    pv_power_6 = gauge(0x0594, 0.01, signed=False, unit="kW")
+    pv_power_6 = gauge(0x0595, 0.01, signed=False, unit="kW")
 
 
 class PvStrings7To8(SofarComponent):
