@@ -1,4 +1,4 @@
-"""Daily and lifetime energy counters — the 0x0680 register block."""
+"""Daily and lifetime energy counters, the 0x0680 register block."""
 
 from __future__ import annotations
 
@@ -9,12 +9,26 @@ from ..variants import HYBRID, PV
 
 
 class EnergyTotals(TornReadCorrectedComponent):
-    """Daily and lifetime solar, load, import and export energy."""
+    """Daily and lifetime solar generation."""
 
     applies_to = PV | HYBRID
 
     solar_generation_today = uint32(0x0684, scale=0.01, unit="kWh")
     solar_generation_total = uint32(0x0686, scale=0.1, unit="kWh")
+
+    _total_increasing_fields = (
+        "solar_generation_today",
+        "solar_generation_total",
+    )
+
+
+# Unmetered models deny this block and read back indeterminate values,
+# so the address mask decides whether it is polled at all.
+class MeterEnergy(TornReadCorrectedComponent):
+    """Daily and lifetime load, import and export energy."""
+
+    applies_to = PV | HYBRID
+
     load_consumption_today = uint32(0x0688, scale=0.01, unit="kWh")
     load_consumption_total = uint32(0x068A, scale=0.1, unit="kWh")
     import_energy_today = uint32(0x068C, scale=0.01, unit="kWh")
@@ -23,8 +37,6 @@ class EnergyTotals(TornReadCorrectedComponent):
     export_energy_total = uint32(0x0692, scale=0.1, unit="kWh")
 
     _total_increasing_fields = (
-        "solar_generation_today",
-        "solar_generation_total",
         "load_consumption_today",
         "load_consumption_total",
         "import_energy_today",

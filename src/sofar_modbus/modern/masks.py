@@ -12,6 +12,12 @@ if TYPE_CHECKING:
 MASK_REGISTERS = 4
 """Registers holding the U64 mask that opens each block."""
 
+BLOCK_SIZE = 64
+"""Addresses one mask covers."""
+
+# A model that publishes masks always declares its own mask registers.
+_SELF_BITS = (1 << MASK_REGISTERS) - 1
+
 # Blocks holding registers this library reads. The spec calls each one
 # AddressMask_*; every 64-address block opens with its own.
 MASK_BLOCKS: tuple[int, ...] = (
@@ -30,6 +36,12 @@ MASK_BLOCKS: tuple[int, ...] = (
     0x1100,  # remote control and charger mode
     0x1180,  # passive mode
 )
+
+# Components a model can deny outright. One address is enough to ask
+# about: the mask that answers covers its whole block.
+GATED_COMPONENTS: dict[str, int] = {
+    "meter_energy": 0x0688,  # needs a meter at the PCC
+}
 
 # Only a battery tower answers these; on anything else they time out.
 TOWER_MASK_BLOCKS: tuple[int, ...] = (
@@ -53,3 +65,15 @@ async def async_read_mask(unit: ModbusUnit, base: int) -> int | None:
     for register in registers:
         value = value << 16 | register
     return value
+
+
+async def async_serves(unit: ModbusUnit, address: int) -> bool | None:
+    """Whether the model declares ``address`` valid.
+
+    ``None`` when it publishes no usable mask, which decides nothing.
+    """
+    base = address - address % BLOCK_SIZE
+    mask = await async_read_mask(unit, base)
+    if mask is None or mask & _SELF_BITS != _SELF_BITS:
+        return None
+    return bool(mask >> (address - base) & 1)
