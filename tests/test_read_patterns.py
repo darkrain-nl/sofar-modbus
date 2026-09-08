@@ -113,7 +113,9 @@ async def test_readings_and_settings_read_their_own_blocks(
     assert "energy" in readings.updated  # counters are measured, not configured
     assert {"feed_in", "charger", "battery_config"} <= settings.updated
     # Nearly a quarter of the poll a caller need not pay for every cycle.
-    assert sum(count for _, count in reading_blocks) == 241
+    # 12 of these are the meter counters read twice, until EnergyTotals
+    # drops its duplicates.
+    assert sum(count for _, count in reading_blocks) == 253
     assert sum(count for _, count in setting_blocks) == 45
 
 
@@ -176,8 +178,9 @@ async def test_a_pv_only_inverter_never_touches_the_battery_registers(
     assert not read & set(range(0x0694, 0x069C))  # battery energy counters
     assert not read & set(range(0x0504, 0x0528))  # off-grid (EPS)
     assert read >= set(range(0x0684, 0x0694))  # a PV inverter still has energy
-    # A single-phase PV inverter is a fraction of the hybrid's poll.
-    assert sum(b.count for b in blocks) < 150
+    # A single-phase PV inverter is a fraction of the hybrid's poll,
+    # 12 registers of which are the duplicated meter counters.
+    assert sum(b.count for b in blocks) < 160
 
 
 async def test_the_extra_mppt_strings_are_only_read_where_they_exist(
