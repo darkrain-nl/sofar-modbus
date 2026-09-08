@@ -1,15 +1,6 @@
 #!/usr/bin/env python3
 
-"""Query a Sofar inverter and print every value.
-
-Reads one inverter once and dumps it to the terminal — the quickest way to
-check a real inverter with no application around it.
-
-::
-
-    uv run script/query.py 192.168.1.50 --unit 1 --framer rtu
-    uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
-"""
+"""Query a Sofar inverter and print every value."""
 
 from __future__ import annotations
 
@@ -33,25 +24,38 @@ from sofar_modbus import (
     matches,
 )
 
-# RS-485 RTU, reached directly or through a gateway that either forwards the
-# frames untouched (rtu) or converts them to native Modbus TCP (socket). ASCII
-# is left out — the library does not support it.
+# RS-485 RTU, direct or through a gateway that forwards the frames
+# untouched (rtu) or converts them to Modbus TCP (socket). No ASCII:
+# the library does not support it.
 CONNECTIONS = (("tcp", "rtu"), ("tcp", "socket"), ("serial", "rtu"))
 
 Inverter = SofarInverter | SofarLegacyInverter
 
+EXAMPLES = """examples:
+  uv run script/query.py 192.168.1.50 --unit 1 --framer rtu
+  uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
+"""
+
 
 def served_components(inverter: Inverter) -> list[tuple[str, Component]]:
-    """The components this inverter serves; ``battery_pack`` needs the tower flag."""
+    """The components this inverter polls, plus the two setup reads."""
     inverter_type = inverter.inverter_type
     assert inverter_type is not None  # the update below set the inverter up
-    has_tower = isinstance(inverter, SofarInverter) and inverter.has_battery_tower
+    if isinstance(inverter, SofarInverter):
+        # The model decides these, so asking it beats deriving them.
+        names = (
+            "identity",
+            "rating",
+            *inverter.readings_components,
+            *inverter.settings_components,
+            *(("battery_pack",) if inverter.has_battery_tower else ()),
+        )
+        return [(name, getattr(inverter, name)) for name in names]
     return [
         (name, component)
         for name, component in vars(inverter).items()
         if isinstance(component, SofarComponentBase)
         and matches(inverter_type, component.applies_to)
-        and (name != "battery_pack" or has_tower)
     ]
 
 
@@ -61,7 +65,11 @@ async def main() -> int:
     # messages below say it in one line.
     logging.getLogger().addHandler(logging.NullHandler())
 
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     add_connection_args(parser, connections=CONNECTIONS)
     parser.add_argument("--unit", type=int, default=1, help="Modbus unit id")
     parser.add_argument(
