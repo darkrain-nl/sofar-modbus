@@ -127,13 +127,11 @@ async def test_a_denied_meter_block_is_not_polled(
 ) -> None:
     """An unmetered model reads indeterminate values there, never zeros."""
     mock_modbus_unit.holding[0x0680] = UNMETERED_ENERGY_MASK
+    mock_modbus_unit.holding[0x068A] = [0, 500]
     await pv_inverter.async_update()
     assert "meter_energy" not in pv_inverter.readings_components
     assert "energy" in pv_inverter.readings_components
-    assert not any(
-        event.address <= 0x0688 < event.address + event.count
-        for event in mock_modbus_unit.read_events
-    )
+    assert pv_inverter.meter_energy.load_consumption_total is None
 
 
 async def test_a_served_meter_block_is_polled(
@@ -182,3 +180,18 @@ async def test_a_model_without_the_component_is_not_asked(
     await device.async_update()
     assert "meter_energy" not in device.readings_components
     assert not any(event.address == 0x0680 for event in mock_modbus_unit.read_events)
+
+
+async def test_a_denied_meter_block_still_answers_on_energy(
+    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """The duplicates keep a consumer bumping the library inert.
+
+    Delete with the duplicates once every consumer reads meter_energy.
+    """
+    mock_modbus_unit.holding[0x0680] = UNMETERED_ENERGY_MASK
+    mock_modbus_unit.holding[0x068A] = [0, 500]
+    await pv_inverter.async_update()
+    assert "meter_energy" not in pv_inverter.readings_components
+    assert pv_inverter.energy.load_consumption_total == pytest.approx(50.0)
+    assert pv_inverter.energy.corrected("load_consumption_total") == pytest.approx(50.0)
