@@ -11,12 +11,19 @@ from modbus_connection import (
 from modbus_connection.mock import MockModbusUnit
 
 from sofar_modbus import SofarInverter
-from sofar_modbus.variants import PV, X1
+from sofar_modbus.variants import GEN, PV, X1
 
 from .conftest import MODERN_HOLDING
 
 # Captured from a 4.4 KTLX-G3; pins the register order against hardware.
 GRID_OUTPUT_MASK = [0x1C00, 0x8218, 0x4308, 0x617F]
+
+# The same unit's energy block: solar generation only, no meter.
+UNMETERED_ENERGY_MASK = [0x0000, 0x0000, 0x0000, 0x00FF]
+# The meter registers 0x0688-0x0693 declared valid alongside it.
+METERED_ENERGY_MASK = [0x0000, 0x0000, 0x000F, 0xFFFF]
+# A mask denying even its own four registers, so not a mask at all.
+SELF_DENYING_MASK = [0x0000, 0x0000, 0x0000, 0x00F0]
 
 # Every block this library reads registers from, spelled out so a change
 # to MASK_BLOCKS has to be made here too.
@@ -113,3 +120,65 @@ async def test_reading_masks_sets_the_inverter_up_first(
     """Whether a tower exists is only known once setup has run."""
     await pv_inverter.async_read_masks()
     assert pv_inverter.serial_number == "SP1ES12345678"
+
+
+async def test_a_denied_meter_block_is_not_polled(
+    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """An unmetered model reads indeterminate values there, never zeros."""
+    mock_modbus_unit.holding[0x0680] = UNMETERED_ENERGY_MASK
+    await pv_inverter.async_update()
+    assert "meter_energy" not in pv_inverter.readings_components
+    assert "energy" in pv_inverter.readings_components
+    assert not any(
+        event.address <= 0x0688 < event.address + event.count
+        for event in mock_modbus_unit.read_events
+    )
+
+
+async def test_a_served_meter_block_is_polled(
+    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A metered model measures load and import for real, so keep them."""
+    mock_modbus_unit.holding[0x0680] = METERED_ENERGY_MASK
+    mock_modbus_unit.holding[0x068A] = [0, 500]
+    await pv_inverter.async_update()
+    assert "meter_energy" in pv_inverter.readings_components
+    assert pv_inverter.meter_energy.load_consumption_total == pytest.approx(50.0)
+
+
+async def test_a_model_publishing_no_mask_keeps_the_meter_block(
+    pv_inverter: SofarInverter,
+) -> None:
+    """Silence decides nothing; only an explicit denial drops a component."""
+    await pv_inverter.async_update()
+    assert "meter_energy" in pv_inverter.readings_components
+
+
+async def test_a_self_denying_mask_is_not_trusted(
+    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A real mask always declares its own four registers valid."""
+    mock_modbus_unit.holding[0x0680] = SELF_DENYING_MASK
+    await pv_inverter.async_update()
+    assert "meter_energy" in pv_inverter.readings_components
+
+
+async def test_an_unanswered_energy_block_keeps_the_meter_block(
+    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A model that refuses the mask has not denied anything."""
+    mock_modbus_unit.fail_read(0x0680, IllegalDataAddressError())
+    await pv_inverter.async_update()
+    assert "meter_energy" in pv_inverter.readings_components
+
+
+async def test_a_model_without_the_component_is_not_asked(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """No point paying for a mask read to gate what is never polled."""
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    device = SofarInverter(mock_modbus_unit, inverter_type=GEN | X1)
+    await device.async_update()
+    assert "meter_energy" not in device.readings_components
+    assert not any(event.address == 0x0680 for event in mock_modbus_unit.read_events)

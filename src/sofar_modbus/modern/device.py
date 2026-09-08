@@ -30,9 +30,15 @@ from ..variants import (
 )
 from .battery import BatteryStrings1To2, BatteryStrings3To8, BatteryTotals
 from .battery_pack import BatteryPack
-from .energy import BatteryEnergy, EnergyTotals
+from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
 from .inverter import GridOutput, Identity, InverterState
-from .masks import MASK_BLOCKS, TOWER_MASK_BLOCKS, async_read_mask
+from .masks import (
+    GATED_COMPONENTS,
+    MASK_BLOCKS,
+    TOWER_MASK_BLOCKS,
+    async_read_mask,
+    async_serves,
+)
 from .offgrid import OffGridSinglePhase, OffGridThreePhase, OffGridTotals
 from .pv import (
     PvString3,
@@ -144,6 +150,7 @@ class SofarInverter:
         self.battery_3_8 = BatteryStrings3To8(unit)
         self.battery_totals = BatteryTotals(unit)
         self.energy = EnergyTotals(unit)
+        self.meter_energy = MeterEnergy(unit)
         self.battery_energy = BatteryEnergy(unit)
         self.rtc_sync = RtcSyncResult(unit)
         self.feed_in = FeedInLimit(unit)
@@ -220,10 +227,12 @@ class SofarInverter:
                 "battery_3_8",
                 "battery_totals",
                 "energy",
+                "meter_energy",
                 "battery_energy",
             )
             if matches(inverter_type, getattr(self, name).applies_to)
         ]
+        await self._async_drop_denied_components()
         self._settings = [
             name
             for name in (
@@ -241,6 +250,18 @@ class SofarInverter:
             )
             if matches(inverter_type, getattr(self, name).applies_to)
         ]
+
+    async def _async_drop_denied_components(self) -> None:
+        """Stop polling components the model says it does not serve.
+
+        A denied block reads as indeterminate values, not as zeros.
+        """
+        assert self._readings is not None
+        for name, address in GATED_COMPONENTS.items():
+            if name not in self._readings:
+                continue
+            if await async_serves(self._unit, address) is False:
+                self._readings.remove(name)
 
     async def _async_probe_eps(self) -> bool:
         """Whether this inverter answers the off-grid (EPS) block."""

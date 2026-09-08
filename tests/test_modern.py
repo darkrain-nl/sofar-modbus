@@ -115,8 +115,12 @@ async def test_constructor_identity_skips_serial_number_read(
     )
     await device._async_setup()
 
-    # Rating and the EPS probe are read; the serial number is never touched.
-    assert [e.address for e in mock_modbus_unit.read_events] == [0x06ED, 0x0504]
+    # Rating, the EPS probe and the meter mask; the serial is never touched.
+    assert [e.address for e in mock_modbus_unit.read_events] == [
+        0x06ED,
+        0x0504,
+        0x0680,
+    ]
     assert device.serial_number == HYBRID_SERIAL
     assert device.model == "HYDxxKTL-3P"
     assert device.inverter_type == hybrid.inverter_type
@@ -307,7 +311,7 @@ async def test_energy_counters(hybrid: SofarInverter) -> None:
     await hybrid.async_update()
     assert hybrid.energy.solar_generation_today == pytest.approx(12.34)  # uint32
     assert hybrid.energy.solar_generation_total == pytest.approx(10000.0)
-    assert hybrid.energy.load_consumption_today == pytest.approx(9.87)
+    assert hybrid.meter_energy.load_consumption_today == pytest.approx(9.87)
     assert hybrid.battery_energy.battery_input_energy_today == pytest.approx(5.5)
 
 

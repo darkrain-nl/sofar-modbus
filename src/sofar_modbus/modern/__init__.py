@@ -3,7 +3,7 @@
 from .battery import BatteryStrings1To2, BatteryStrings3To8, BatteryTotals
 from .battery_pack import BatteryPack
 from .device import SofarInverter, identify
-from .energy import BatteryEnergy, EnergyTotals
+from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
 from .enums import (
     BatConfigCellType,
     BatConfigProtocol,
@@ -122,6 +122,7 @@ __all__ = [
     "Identity",
     "InverterRating",
     "InverterState",
+    "MeterEnergy",
     "OffGridSinglePhase",
     "OffGridThreePhase",
     "OffGridTotals",
