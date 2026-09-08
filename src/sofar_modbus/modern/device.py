@@ -32,6 +32,7 @@ from .battery import BatteryStrings1To2, BatteryStrings3To8, BatteryTotals
 from .battery_pack import BatteryPack
 from .energy import BatteryEnergy, EnergyTotals
 from .inverter import GridOutput, Identity, InverterState
+from .masks import MASK_BLOCKS, TOWER_MASK_BLOCKS, async_read_mask
 from .offgrid import OffGridSinglePhase, OffGridThreePhase, OffGridTotals
 from .pv import (
     PvString3,
@@ -327,6 +328,22 @@ class SofarInverter:
             for space, values in (await component.async_read_raw(notify=False)).items():
                 raw.setdefault(space, {}).update(values)
         return raw
+
+    async def async_read_masks(self) -> dict[int, int]:
+        """Each block's declared-valid register mask, keyed by block base.
+
+        Blocks answering none are left out; the tower's cost a timeout.
+        """
+        if self._readings is None or self._settings is None:
+            await self._async_setup()
+        bases = MASK_BLOCKS
+        if self.has_battery_tower:
+            bases += TOWER_MASK_BLOCKS
+        masks: dict[int, int] = {}
+        for base in bases:
+            if (mask := await async_read_mask(self._unit, base)) is not None:
+                masks[base] = mask
+        return masks
 
     async def async_read_pack(self, pack_nr: int, group_nr: int = 0) -> BatteryPack:
         """Select a BTS pack and read it.

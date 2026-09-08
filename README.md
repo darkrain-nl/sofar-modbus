@@ -184,6 +184,17 @@ not a poll, though the fields it reads do refresh. The pack block is not in it:
 a dump of it would be whichever pack happened to be selected, with nothing to
 say which.
 
+`async_read_masks()` is the other half of an issue report. Every 64-address
+block of this generation opens with a four-register mask naming which of its
+registers the model actually serves, and this returns one per block, keyed by
+the block's base address; bit *n* of a mask is `base + n`. It is worth having
+because an inverter answers a register it does not serve rather than refusing
+it, usually with zeros but not always, so the mask is the only dependable
+statement of what a model supports. Blocks answering no mask are left out, and
+the battery tower's blocks are only asked for when the inverter reports a tower,
+since asking without one buys a timeout. Nothing decides what to poll from these
+yet: today they are for reading, not for detection.
+
 ## Checking a real inverter
 
 `script/query.py` reads one inverter once and prints every value it serves,
