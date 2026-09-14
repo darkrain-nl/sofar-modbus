@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 
 from modbus_connection import ModbusError
@@ -24,16 +25,18 @@ from sofar_modbus import (
     matches,
 )
 
-# RS-485 RTU, direct or through a gateway that forwards the frames
-# untouched (rtu) or converts them to Modbus TCP (socket). No ASCII:
-# the library does not support it.
+# An inverter's RS-485 line, direct or through a socket:// device, and
+# the gateways answering Modbus TCP themselves. No ASCII: the library
+# does not support it. The tcp framings are the deprecated spelling of
+# a serial line, kept working while the examples move over.
 CONNECTIONS = (("tcp", "rtu"), ("tcp", "socket"), ("serial", "rtu"))
 
 Inverter = SofarInverter | SofarLegacyInverter
 
 EXAMPLES = """examples:
-  uv run script/query.py 192.168.1.50 --unit 1 --framer rtu
+  uv run script/query.py socket://192.168.1.50:8899 --transport serial --unit 1
   uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
+  uv run script/query.py 192.168.1.50 --unit 1 --raw
 """
 
 
@@ -80,6 +83,9 @@ async def main() -> int:
         action="store_true",
         help="also read the parallel-system registers (current generation only)",
     )
+    parser.add_argument(
+        "--raw", action="store_true", help="also dump every register read, as JSON"
+    )
     args = parser.parse_args()
 
     try:
@@ -98,6 +104,8 @@ async def main() -> int:
     )
     try:
         report = await inverter.async_update()  # the first update sets the inverter up
+        poll_reads = counting.reads  # a raw dump re-reads, so count the poll alone
+        raw = await inverter.async_read_raw() if args.raw else None
     except ModbusError as err:
         print(f"Could not read the inverter: {str(err) or type(err).__name__}")
         return 1
@@ -116,7 +124,11 @@ async def main() -> int:
         print("\nFailed to read:")
         for name, error in report.failed.items():
             print(f"  {name}: {str(error) or type(error).__name__}")
-    print(f"\n{counting.reads} Modbus reads")
+    if raw is not None:
+        print("\nRaw registers")
+        # The dump arrives address-ordered; sorting keys would undo that.
+        print(json.dumps(raw, indent=2))
+    print(f"\n{poll_reads} Modbus reads")
     return 0
 
 
