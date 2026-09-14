@@ -9,7 +9,12 @@ from dataclasses import dataclass
 from statistics import median
 from typing import TYPE_CHECKING
 
-from modbus_connection import ModbusError, ModbusTimeoutError
+from modbus_connection import (
+    ModbusDesyncError,
+    ModbusError,
+    ModbusTimeoutError,
+    ServerDeviceBusyError,
+)
 
 if TYPE_CHECKING:
     from modbus_connection import ModbusUnit
@@ -179,7 +184,12 @@ def _percentile(answered: list[float], fraction: float) -> float | None:
 
 
 MARGIN = 4.0
-"""Headroom over the slowest request that answered."""
+"""Headroom over the slowest request that answered.
+
+The slowest, not a percentile: a gateway that caches blocks answers most
+reads in about a millisecond and a real fetch in hundreds, so a median
+describes the cache rather than the device behind it.
+"""
 
 FLOOR = 0.5
 """The shortest timeout worth asking for, whatever the window says."""
@@ -199,6 +209,26 @@ MAX_CLEAN_POLLS = 80
 WORTH_ASKING = 0.75
 """A new target is only asked for below this much of the standing one."""
 
+SPACING_STEPS = (0.02, 0.03, 0.05, 0.1, 0.2)
+"""Gaps to try between this unit's own frames, narrowest first.
+
+30 ms is what Home Assistant's YAML modbus integration has long given a
+serial line by default, and nothing at all to a TCP one, so the ladder
+steps through it rather than starting there.
+"""
+
+BUDGET = 1.0
+"""Seconds of gap a poll may grow by, which caps how wide a step gets."""
+
+CROWDED_POLLS = 3
+"""Polls carrying a crowded line before widening; a desync needs one."""
+
+QUIET_POLLS = 20
+"""Polls without a sign of crowding before trying one step narrower."""
+
+MAX_QUIET_POLLS = 160
+"""The most patience a line that keeps crowding is allowed to earn."""
+
 
 def target_timeout(slowest: float | None) -> float | None:
     """The timeout this slowest answer earns, or ``None`` to ask nothing.
@@ -217,29 +247,97 @@ class LinkTuning:
     """What the tuner asks of a link, and how often it has withdrawn."""
 
     timeout: float | None = None
+    spacing: float = 0.0
     withdrawals: int = 0
 
 
 class LinkTuner:
-    """Ask a link for the timeout its own traffic says it needs.
+    """Hold a link to the timing its own traffic says it needs.
 
-    It only lowers; a timeout under a lowered value withdraws the ask.
+    The timeout only comes down; the gap only widens on a crowded line.
     """
 
-    def __init__(self, unit: TimedUnit) -> None:
+    def __init__(self, unit: TimedUnit, *, budget: float = BUDGET) -> None:
         self._unit = unit
+        self._budget = budget
         self._asked: float | None = None
         self._withdrawals = 0
         self._clean = 0
         self._required = CLEAN_POLLS
+        self._spacing = 0.0
+        self._crowded = 0
+        self._quiet = 0
+        self._required_quiet = QUIET_POLLS
+        self._answered: set[str] = set()
+        self._reads = 0
+        self._reads_per_poll = 1
 
     @property
     def tuning(self) -> LinkTuning:
         """What is being asked of the link as things stand."""
-        return LinkTuning(self._asked, self._withdrawals)
+        return LinkTuning(self._asked, self._spacing, self._withdrawals)
 
     def observe(self, report: UpdateReport) -> None:
         """Take one poll's outcome in, between polls and nowhere else."""
+        polled, self._reads = self._unit.reads - self._reads, self._unit.reads
+        # A high-water mark: a report carrying no reads of its own must not
+        # read as a cheap poll and hand the budget out to one wide gap.
+        self._reads_per_poll = max(self._reads_per_poll, polled)
+        self._observe_spacing(report)
+        self._observe_timeout(report)
+        # A component has to have answered once for its silence to mean
+        # anything, so this trails the poll that is being judged.
+        self._answered |= report.updated
+
+    def _observe_spacing(self, report: UpdateReport) -> None:
+        """Widen the gap for a line dropping frames, narrow it for a quiet one."""
+        if any(isinstance(err, ModbusDesyncError) for err in report.failed.values()):
+            self._widen()  # a reply to another exchange is never ambiguous
+            return
+        if self._crowding(report):
+            self._quiet = 0
+            self._crowded += 1
+            if self._crowded >= CROWDED_POLLS:
+                self._widen()
+            return
+        self._crowded = 0
+        self._quiet += 1
+        if self._quiet >= self._required_quiet:
+            self._narrow()
+
+    def _crowding(self, report: UpdateReport) -> bool:
+        """Whether the failures read as a line that cannot keep up.
+
+        Silence from a component that never answered is a model's.
+        """
+        return any(
+            isinstance(err, ServerDeviceBusyError)
+            or (isinstance(err, ModbusTimeoutError) and name in self._answered)
+            for name, err in report.failed.items()
+        )
+
+    def _widen(self) -> None:
+        """Take the next gap the budget allows, and grow more patient."""
+        self._crowded = self._quiet = 0
+        cap = self._budget / self._reads_per_poll
+        wider = [gap for gap in SPACING_STEPS if self._spacing < gap <= cap]
+        if not wider:
+            return
+        self._spacing = wider[0]
+        self._unit.set_message_spacing(self._spacing)
+        self._required_quiet = min(self._required_quiet * 2, MAX_QUIET_POLLS)
+
+    def _narrow(self) -> None:
+        """Give one step of the gap back to a line that has stayed quiet."""
+        self._quiet = 0
+        if not self._spacing:
+            return
+        narrower = [gap for gap in SPACING_STEPS if gap < self._spacing]
+        self._spacing = narrower[-1] if narrower else 0.0
+        self._unit.set_message_spacing(self._spacing)
+
+    def _observe_timeout(self, report: UpdateReport) -> None:
+        """Lower the timeout a quiet link has earned, or hand its own back."""
         if any(isinstance(err, ModbusTimeoutError) for err in report.failed.values()):
             self._withdraw()
             return

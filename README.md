@@ -275,15 +275,31 @@ while True:
     tuner.observe(await inverter.async_update_readings())
 ```
 
-After five polls with nothing timing out, it asks for four times the slowest
-request it saw, which on a link answering in 370 ms is about 1.5 seconds
-instead of ten. It only ever lowers: a link too slow to be worth asking about
-keeps its own default, and a timeout under a value the tuner asked for
-withdraws that ask entirely and waits twice as long before trying again. So
+It tunes two things, from what the polls tell it.
+
+**The timeout.** After five polls with nothing timing out, it asks for four
+times the slowest request it saw, which on a link answering in 370 ms is about
+1.5 seconds instead of ten. It only ever lowers: a link too slow to be worth
+asking about keeps its own default, and a timeout under a value the tuner asked
+for withdraws that ask entirely and waits twice as long before trying again. So
 the worst it can do is hand the link back what it started with.
 
-`tuner.tuning` is what it is asking for and how often it has had to give up,
+**The gap between frames.** A device that cannot take requests back to back
+says so by answering the wrong exchange (`ModbusDesyncError`), by reporting
+itself busy, or by going quiet on a component that was answering a moment ago.
+A desync widens the gap at once, the other two after three polls, up to 200 ms.
+Twenty quiet polls give a step back, and each widening doubles the patience
+before that is tried again. A `budget=` caps the whole thing: the gap is never
+wider than that many seconds spread over the reads one poll makes, so a poll
+cannot outgrow its interval. Registers a model has never served are exempt,
+since chasing an absent block would widen the gap forever.
+
+`tuner.tuning` is what it asks of the link and how often it has had to give up,
 which is worth putting in a diagnostics download.
+
+The gap is per unit, so it paces this inverter's own frames and no one else's.
+A line shared with another device cannot be quieted from here, only from
+whoever builds the connection.
 
 ## Attribution
 

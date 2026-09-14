@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
+    ModbusDesyncError,
     ModbusTimeoutError,
     ModbusUnit,
+    ServerDeviceBusyError,
 )
 from modbus_connection.mock import MockModbusUnit
 from modbus_connection.model import UpdateReport
@@ -14,7 +16,10 @@ from modbus_connection.model import UpdateReport
 from sofar_modbus import SofarInverter, SofarLegacyInverter
 from sofar_modbus.tuning import (
     CLEAN_POLLS,
+    CROWDED_POLLS,
     FLOOR,
+    QUIET_POLLS,
+    SPACING_STEPS,
     LinkTuner,
     LinkTuning,
     TimedUnit,
@@ -229,3 +234,123 @@ async def test_a_refused_register_is_not_a_slow_link(
     tuner.observe(UpdateReport({"grid"}, {"eps": IllegalDataAddressError()}))
 
     assert mock_modbus_unit.required_timeout == FLOOR
+
+
+def _desynced() -> UpdateReport:
+    return UpdateReport({"grid"}, {"state": ModbusDesyncError("wrong reply")})
+
+
+def _busy() -> UpdateReport:
+    return UpdateReport({"grid"}, {"state": ServerDeviceBusyError()})
+
+
+async def test_a_desync_widens_the_gap_on_the_spot(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A reply to another exchange is the one unambiguous sign of crowding."""
+    inverter, tuner = tuned
+    await _poll(inverter, tuner)
+    tuner.observe(_desynced())
+
+    assert tuner.tuning.spacing == SPACING_STEPS[0]
+    assert mock_modbus_unit.message_spacing == SPACING_STEPS[0]
+
+
+async def test_a_busy_device_has_to_say_so_more_than_once(
+    tuned: tuple[SofarInverter, LinkTuner],
+) -> None:
+    inverter, tuner = tuned
+    await _poll(inverter, tuner)
+    for _ in range(CROWDED_POLLS - 1):
+        tuner.observe(_busy())
+    assert tuner.tuning.spacing == 0.0
+
+    tuner.observe(_busy())
+    assert tuner.tuning.spacing == SPACING_STEPS[0]
+
+
+async def test_a_register_the_model_never_served_is_not_crowding(
+    tuned: tuple[SofarInverter, LinkTuner],
+) -> None:
+    """Chasing an absent register would widen the gap forever."""
+    _, tuner = tuned
+    for _ in range(CROWDED_POLLS + 2):
+        tuner.observe(UpdateReport({"grid"}, {"eps": ModbusTimeoutError("silent")}))
+
+    assert tuner.tuning.spacing == 0.0
+
+
+async def test_a_component_that_did_answer_going_quiet_is_crowding(
+    tuned: tuple[SofarInverter, LinkTuner],
+) -> None:
+    _, tuner = tuned
+    tuner.observe(UpdateReport({"state"}, {}))
+    for _ in range(CROWDED_POLLS):
+        tuner.observe(UpdateReport({"grid"}, {"state": ModbusTimeoutError("silent")}))
+
+    assert tuner.tuning.spacing == SPACING_STEPS[0]
+
+
+async def test_the_budget_caps_how_wide_a_poll_may_get(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """Thirty reads at fifty milliseconds would cost more than the budget."""
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    timed = TimedUnit(mock_modbus_unit)
+    inverter = SofarInverter(timed, read_pm=True)
+    tuner = LinkTuner(timed, budget=1.0)
+    await _poll(inverter, tuner)
+
+    for _ in range(3):
+        tuner.observe(_desynced())
+
+    # A second of budget over this many reads caps the gap under 30 ms, so
+    # the step the ladder would take next does not fit.
+    assert timed.reads > 33
+    assert tuner.tuning.spacing == 0.02
+
+
+async def test_a_wider_budget_lets_the_ladder_climb(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """The same three desyncs, with room to answer them."""
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    timed = TimedUnit(mock_modbus_unit)
+    inverter = SofarInverter(timed, read_pm=True)
+    tuner = LinkTuner(timed, budget=10.0)
+    await _poll(inverter, tuner)
+
+    for _ in range(3):
+        tuner.observe(_desynced())
+
+    assert tuner.tuning.spacing == SPACING_STEPS[2]
+
+
+async def test_a_quiet_line_gets_a_step_back(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    inverter, tuner = tuned
+    await _poll(inverter, tuner)
+    tuner.observe(_desynced())
+    widened = tuner.tuning.spacing
+
+    for _ in range(QUIET_POLLS * 2):
+        await _poll(inverter, tuner)
+
+    assert widened == SPACING_STEPS[0]
+    assert tuner.tuning.spacing == 0.0
+    assert mock_modbus_unit.message_spacing == 0.0
+
+
+async def test_widening_buys_patience_before_the_next_narrowing(
+    tuned: tuple[SofarInverter, LinkTuner],
+) -> None:
+    """A line that crowded once is not asked the same question as often."""
+    inverter, tuner = tuned
+    await _poll(inverter, tuner)
+    tuner.observe(_desynced())
+
+    for _ in range(QUIET_POLLS):
+        await _poll(inverter, tuner)
+
+    assert tuner.tuning.spacing == SPACING_STEPS[0]
