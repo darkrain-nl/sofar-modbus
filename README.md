@@ -294,8 +294,22 @@ wider than that many seconds spread over the reads one poll makes, so a poll
 cannot outgrow its interval. Registers a model has never served are exempt,
 since chasing an absent block would widen the gap forever.
 
+**The pause after the link opens.** Some devices are not ready to answer the
+moment the socket is. Two opening requests that go unanswered earn a quarter
+second, then half, then one, then two. This one is never given back: it costs a
+single wait per connect, and a device that needed it still does.
+
 `tuner.tuning` is what it asks of the link and how often it has had to give up,
-which is worth putting in a diagnostics download.
+which is worth putting in a diagnostics download, and worth storing:
+
+```python
+tuner.restore(saved)  # before the first poll
+...
+save(tuner.tuning)  # whenever it changes
+```
+
+Restoring brings back the patience that came with it, so a link that had to
+hand a timeout back is not asked the same question after every restart.
 
 The gap is per unit, so it paces this inverter's own frames and no one else's.
 A line shared with another device cannot be quieted from here, only from

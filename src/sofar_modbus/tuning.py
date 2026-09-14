@@ -46,6 +46,8 @@ class TimedUnit:
         self._unit = unit
         self._samples: deque[tuple[float, str | None]] = deque(maxlen=window)
         self.reads = 0
+        self.opens = 0
+        self.failed_opens = 0
 
     @property
     def stats(self) -> LinkStats:
@@ -65,11 +67,17 @@ class TimedUnit:
         )
 
     async def _timed[T](self, request: Awaitable[T]) -> T:
-        """Await one request, recording how long it took and how it ended."""
+        """Await one request, recording how long it took and how it ended.
+
+        One made while the link is down opens it, and pays for that.
+        """
+        opening = not self._unit.connected
+        self.opens += opening
         started = time.monotonic()
         try:
             answer = await request
         except ModbusError as err:
+            self.failed_opens += opening
             self._samples.append((time.monotonic() - started, type(err).__name__))
             raise
         self._samples.append((time.monotonic() - started, None))
@@ -229,6 +237,12 @@ QUIET_POLLS = 20
 MAX_QUIET_POLLS = 160
 """The most patience a line that keeps crowding is allowed to earn."""
 
+CONNECT_DELAYS = (0.25, 0.5, 1.0, 2.0)
+"""Pauses to try after the link opens, shortest first."""
+
+FAILED_OPENS = 2
+"""Opening requests that went unanswered before asking for a pause."""
+
 
 def target_timeout(slowest: float | None) -> float | None:
     """The timeout this slowest answer earns, or ``None`` to ask nothing.
@@ -248,6 +262,7 @@ class LinkTuning:
 
     timeout: float | None = None
     spacing: float = 0.0
+    connect_delay: float = 0.0
     withdrawals: int = 0
 
 
@@ -271,11 +286,15 @@ class LinkTuner:
         self._answered: set[str] = set()
         self._reads = 0
         self._reads_per_poll = 1
+        self._delay = 0.0
+        self._opens = 0
+        self._failed_opens = 0
+        self._bad_opens = 0
 
     @property
     def tuning(self) -> LinkTuning:
         """What is being asked of the link as things stand."""
-        return LinkTuning(self._asked, self._spacing, self._withdrawals)
+        return LinkTuning(self._asked, self._spacing, self._delay, self._withdrawals)
 
     def observe(self, report: UpdateReport) -> None:
         """Take one poll's outcome in, between polls and nowhere else."""
@@ -285,6 +304,7 @@ class LinkTuner:
         self._reads_per_poll = max(self._reads_per_poll, polled)
         self._observe_spacing(report)
         self._observe_timeout(report)
+        self._observe_opening()
         # A component has to have answered once for its silence to mean
         # anything, so this trails the poll that is being judged.
         self._answered |= report.updated
@@ -335,6 +355,47 @@ class LinkTuner:
         narrower = [gap for gap in SPACING_STEPS if gap < self._spacing]
         self._spacing = narrower[-1] if narrower else 0.0
         self._unit.set_message_spacing(self._spacing)
+
+    def _observe_opening(self) -> None:
+        """Pause after the link opens for a device that needs one.
+
+        Never given back: one wait per connect is cheap to keep paying.
+        """
+        opens = self._unit.opens - self._opens
+        failed = self._unit.failed_opens - self._failed_opens
+        self._opens, self._failed_opens = self._unit.opens, self._unit.failed_opens
+        if not failed:
+            if opens:
+                self._bad_opens = 0
+            return
+        self._bad_opens += failed
+        if self._bad_opens < FAILED_OPENS:
+            return
+        self._bad_opens = 0
+        longer = [pause for pause in CONNECT_DELAYS if pause > self._delay]
+        if not longer:
+            return
+        self._delay = longer[0]
+        self._unit.require_connect_delay(self._delay)
+
+    def restore(self, tuning: LinkTuning) -> None:
+        """Take up what an earlier run settled on, before polling starts.
+
+        Patience comes back with it, or a restart resets every backoff.
+        """
+        self._asked = tuning.timeout
+        self._spacing = tuning.spacing
+        self._delay = tuning.connect_delay
+        self._withdrawals = tuning.withdrawals
+        self._required = min(CLEAN_POLLS * 2**tuning.withdrawals, MAX_CLEAN_POLLS)
+        steps = sum(1 for gap in SPACING_STEPS if gap <= tuning.spacing)
+        self._required_quiet = min(QUIET_POLLS * 2**steps, MAX_QUIET_POLLS)
+        if tuning.timeout is not None:
+            self._unit.require_timeout(tuning.timeout)
+        if tuning.spacing:
+            self._unit.set_message_spacing(tuning.spacing)
+        if tuning.connect_delay:
+            self._unit.require_connect_delay(tuning.connect_delay)
 
     def _observe_timeout(self, report: UpdateReport) -> None:
         """Lower the timeout a quiet link has earned, or hand its own back."""

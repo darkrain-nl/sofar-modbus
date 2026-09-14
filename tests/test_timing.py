@@ -16,7 +16,9 @@ from modbus_connection.model import UpdateReport
 from sofar_modbus import SofarInverter, SofarLegacyInverter
 from sofar_modbus.tuning import (
     CLEAN_POLLS,
+    CONNECT_DELAYS,
     CROWDED_POLLS,
+    FAILED_OPENS,
     FLOOR,
     QUIET_POLLS,
     SPACING_STEPS,
@@ -354,3 +356,95 @@ async def test_widening_buys_patience_before_the_next_narrowing(
         await _poll(inverter, tuner)
 
     assert tuner.tuning.spacing == SPACING_STEPS[0]
+
+
+async def test_a_request_that_opens_the_link_is_marked_as_one(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    mock_modbus_unit.holding[0x0404] = 2
+    timed = TimedUnit(mock_modbus_unit)
+    await timed.read_holding_registers(0x0404, 1)
+    await timed.read_holding_registers(0x0404, 1)
+
+    assert (timed.opens, timed.failed_opens) == (1, 0)
+
+
+async def test_an_opening_request_that_goes_unanswered_is_counted(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    mock_modbus_unit.fail_read(0x0404, ModbusTimeoutError("not ready yet"))
+    timed = TimedUnit(mock_modbus_unit)
+    with pytest.raises(ModbusTimeoutError):
+        await timed.read_holding_registers(0x0404, 1)
+
+    assert (timed.opens, timed.failed_opens) == (1, 1)
+
+
+async def test_a_device_that_answers_no_opening_request_earns_a_pause(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    inverter, tuner = tuned
+    mock_modbus_unit.fail_read(0x0404, ModbusTimeoutError("not ready yet"))
+    for _ in range(FAILED_OPENS):
+        with pytest.raises(ModbusTimeoutError):
+            await inverter.state.async_update()
+        await mock_modbus_unit.disconnect()
+    tuner.observe(UpdateReport({"grid"}, {}))
+
+    assert tuner.tuning.connect_delay == CONNECT_DELAYS[0]
+    assert mock_modbus_unit.required_connect_delay == CONNECT_DELAYS[0]
+
+
+async def test_one_bad_open_among_good_ones_is_not_a_pattern(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A link that opens cleanly in between was never the problem."""
+    inverter, tuner = tuned
+
+    async def open_and_read(answering: bool) -> None:
+        await mock_modbus_unit.disconnect()
+        failure = None if answering else ModbusTimeoutError("not ready yet")
+        mock_modbus_unit.fail_read(0x0404, failure)
+        if answering:
+            await inverter.state.async_update()
+        else:
+            with pytest.raises(ModbusTimeoutError):
+                await inverter.state.async_update()
+        tuner.observe(UpdateReport({"grid"}, {}))
+
+    await open_and_read(answering=False)
+    await open_and_read(answering=True)
+    await open_and_read(answering=False)
+
+    assert tuner.tuning.connect_delay == 0.0
+
+
+async def test_what_a_run_settled_on_comes_back(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    timed = TimedUnit(mock_modbus_unit)
+    settled = LinkTuning(timeout=1.4, spacing=0.05, connect_delay=0.5, withdrawals=2)
+    LinkTuner(timed).restore(settled)
+
+    assert mock_modbus_unit.required_timeout == 1.4
+    assert mock_modbus_unit.message_spacing == 0.05
+    assert mock_modbus_unit.required_connect_delay == 0.5
+
+
+async def test_a_restored_run_keeps_the_patience_it_paid_for(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """Or every restart asks a marginal link the same question again."""
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    timed = TimedUnit(mock_modbus_unit)
+    inverter = SofarInverter(timed, read_pm=True)
+    tuner = LinkTuner(timed)
+    tuner.restore(LinkTuning(withdrawals=2))
+
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+    assert tuner.tuning.timeout is None
+
+    for _ in range(CLEAN_POLLS * 3):
+        await _poll(inverter, tuner)
+    assert tuner.tuning.timeout == FLOOR
