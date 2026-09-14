@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from modbus_connection import (
-    IllegalDataAddressError,
-    IllegalFunctionError,
-    ModbusConnectionError,
-    ModbusError,
-    ModbusTimeoutError,
-)
+from modbus_connection import IllegalDataAddressError, IllegalFunctionError
+from modbus_connection.model import Device, Raw
 
-from ..model import SofarComponent, UpdateReport
+from ..model import UpdateReport
 from ..variants import (
     BAT_BTS,
     EPS,
@@ -106,7 +101,7 @@ def identify(serial: str) -> tuple[InverterType, str | None]:
     return InverterType(0), None
 
 
-class SofarInverter:
+class SofarInverter(Device):
     """A current-generation Sofar inverter reached through a ``ModbusUnit``.
 
     Build the unit from RTU -- ASCII framing over TCP is unsupported.
@@ -125,7 +120,7 @@ class SofarInverter:
 
         ``read_pm`` reads parallel-system registers an inverter refuses.
         """
-        self._unit = unit
+        super().__init__(unit)
         self._options = PM if read_pm else InverterType(0)
         self.model = model
         self.serial_number = serial_number
@@ -166,8 +161,8 @@ class SofarInverter:
         # Read via async_read_pack(), one pack at a time; never in the poll.
         self.battery_pack = BatteryPack(unit)
 
-        self._readings: list[str] | None = None
-        self._settings: list[str] | None = None
+        self._readings: list[str] = []
+        self._settings: list[str] = []
 
     @property
     def has_battery_tower(self) -> bool:
@@ -177,12 +172,12 @@ class SofarInverter:
     @property
     def settings_components(self) -> tuple[str, ...]:
         """Settings component names this inverter polls; empty before setup."""
-        return tuple(self._settings or ())
+        return tuple(self._settings)
 
     @property
     def readings_components(self) -> tuple[str, ...]:
         """Reading component names this inverter polls; empty before setup."""
-        return tuple(self._readings or ())
+        return tuple(self._readings)
 
     async def _async_setup(self) -> None:
         """Read the serial number, settle the model, and pick what to poll."""
@@ -256,11 +251,10 @@ class SofarInverter:
 
         A denied block reads as indeterminate values, not as zeros.
         """
-        assert self._readings is not None
         for name, address in GATED_COMPONENTS.items():
             if name not in self._readings:
                 continue
-            if await async_serves(self._unit, address) is False:
+            if await async_serves(self.modbus_unit, address) is False:
                 self._readings.remove(name)
 
     async def _async_probe_eps(self) -> bool:
@@ -271,98 +265,49 @@ class SofarInverter:
             return False
         return True
 
-    def _notify(self, report: UpdateReport) -> None:
-        """Fire listeners on every component that successfully refreshed."""
-        for name in report.updated:
-            fresh: SofarComponent = getattr(self, name)
-            fresh.notify()
-
     async def async_update_readings(self) -> UpdateReport:
         """Refresh telemetry measurements (power, energy, battery, state)."""
-        if self._readings is None:
-            await self._async_setup()
-            assert self._readings is not None
-        report = await self._async_poll(self._readings)
-        self._notify(report)
-        return report
+        await self.async_ensure_setup()
+        return await self.async_poll(self._readings)
 
     async def async_update_settings(self) -> UpdateReport:
         """Refresh configuration registers (charger mode, limits, battery config).
 
         Split from telemetry: configuration only changes when written.
         """
-        if self._settings is None:
-            await self._async_setup()
-            assert self._settings is not None
-        report = await self._async_poll(self._settings)
-        self._notify(report)
-        return report
+        await self.async_ensure_setup()
+        return await self.async_poll(self._settings)
 
     async def async_update(self) -> UpdateReport:
-        """Refresh readings and settings together in one report."""
-        if self._readings is None or self._settings is None:
-            await self._async_setup()
-            assert self._readings is not None and self._settings is not None
-        report = await self._async_poll(self._readings)
-        await self._async_poll(self._settings, report)
-        self._notify(report)
-        return report
+        """Refresh readings and settings together in one report.
 
-    async def _async_poll(
-        self,
-        targets: Sequence[str],
-        report: UpdateReport | None = None,
-    ) -> UpdateReport:
-        """Read each component on its own, adding what happened to ``report``.
-
-        A dead link raises instead of reporting a per-component failure.
+        One poll, so listeners see both halves at once.
         """
-        if report is None:
-            report = UpdateReport(set(), {})
-        for name in targets:
-            component: SofarComponent = getattr(self, name)
-            try:
-                await component.async_update(notify=False)
-            except ModbusConnectionError:
-                raise
-            except ModbusTimeoutError as err:
-                if not report.updated and not report.failed:
-                    raise  # nothing answered at all: assume the rest time out too
-                report.failed[name] = err
-            except ModbusError as err:
-                report.failed[name] = err
-            else:
-                report.updated.add(name)
-        return report
+        await self.async_ensure_setup()
+        return await self.async_poll([*self._readings, *self._settings])
 
-    async def async_read_raw(self) -> dict[str, dict[int, int | bool]]:
-        """Every register this inverter reads, undecoded — for diagnostics.
+    async def async_read_raw(self, names: Iterable[str] | None = None) -> Raw:
+        """Every register this inverter reads, undecoded, for diagnostics.
 
         ``battery_pack`` is excluded: no way to say which pack it is.
         """
-        if self._readings is None or self._settings is None:
-            await self._async_setup()
-            assert self._readings is not None and self._settings is not None
-        raw: dict[str, dict[int, int | bool]] = {}
-        for name in ("identity", "rating", *self._readings, *self._settings):
-            component: SofarComponent = getattr(self, name)
-            for space, values in (await component.async_read_raw(notify=False)).items():
-                raw.setdefault(space, {}).update(values)
-        return raw
+        await self.async_ensure_setup()
+        if names is None:
+            names = ("identity", "rating", *self._readings, *self._settings)
+        return await super().async_read_raw(names)
 
     async def async_read_masks(self) -> dict[int, int]:
         """Each block's declared-valid register mask, keyed by block base.
 
         Blocks answering none are left out; the tower's cost a timeout.
         """
-        if self._readings is None or self._settings is None:
-            await self._async_setup()
+        await self.async_ensure_setup()
         bases = MASK_BLOCKS
         if self.has_battery_tower:
             bases += TOWER_MASK_BLOCKS
         masks: dict[int, int] = {}
         for base in bases:
-            if (mask := await async_read_mask(self._unit, base)) is not None:
+            if (mask := await async_read_mask(self.modbus_unit, base)) is not None:
                 masks[base] = mask
         return masks
 
@@ -381,7 +326,7 @@ class SofarInverter:
         ``rtc_sync`` reports whether the seven-register write took.
         """
         moment = when or datetime.now()
-        await self._unit.write_registers(
+        await self.modbus_unit.write_registers(
             _SET_TIME_REGISTER,
             [
                 moment.year % 100,
@@ -396,4 +341,4 @@ class SofarInverter:
 
     async def async_start_iv_curve_scan(self) -> None:
         """Ask the inverter to sweep its PV strings' I-V curves."""
-        await self._unit.write_register(_IV_CURVE_SCAN_REGISTER, 1)
+        await self.modbus_unit.write_register(_IV_CURVE_SCAN_REGISTER, 1)
