@@ -4,7 +4,7 @@ Read Sofar Solar inverters over Modbus, as typed Python objects rather than
 register numbers.
 
 The library maps Sofar's register set onto
-[modbus-connection](https://github.com/balloob/modbus-connection)'s device model:
+[modbus-connection](https://github.com/home-assistant-libs/modbus-connection)'s device model:
 you hand it a `ModbusUnit`, call `async_update()`, and read sub-systems as
 attributes. It owns no connection and no I/O policy — the caller does.
 
@@ -37,14 +37,14 @@ touched — an inverter without batteries never sees a battery register.
 ```python
 import asyncio
 
-from modbus_connection import ModbusTcpParams
+from modbus_connection import ModbusSerialParams
 from modbus_connection.tmodbus import ModbusConnection
 from sofar_modbus import SofarInverter
 
 
 async def main() -> None:
     connection = ModbusConnection(
-        ModbusTcpParams(host="192.168.1.50", port=502, framer="rtu")
+        ModbusSerialParams(device="socket://192.168.1.50:8899")
     )
     try:
         inverter = SofarInverter(connection.for_unit(1))
@@ -202,22 +202,37 @@ which is the quickest way to see whether an inverter is reachable, addressed
 correctly, and detected as the model you expect:
 
 ```bash
-uv run script/query.py 192.168.1.50 --unit 1 --framer rtu
+uv run script/query.py socket://192.168.1.50:8899 --transport serial --unit 1
 uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
+uv run script/query.py 192.168.1.50 --unit 1 --raw
 ```
 
 The two generations share serial prefixes, so the script does not guess which
-one it is talking to — pass `--legacy` for an older inverter. It prints the read
+one it is talking to: pass `--legacy` for an older inverter. It prints the read
 count as well, so a poll's request budget is visible against real hardware
-rather than only in the tests.
+rather than only in the tests. `--raw` adds every register it read, undecoded,
+which is what an issue about a wrong value should quote.
 
-## ASCII over TCP is not supported
+## Naming the link
 
-Sofar inverters are reached over RTU or RTU-over-TCP. This library never accepts
-or forwards `framer="ascii"`, and it exposes no connect helper that could: the
-caller builds the `ModbusUnit` and hands it over. Build it from an RTU serial or
-RTU-over-TCP connection — an ASCII-framed TCP connection is unsupported and
-untested, and nothing here works around it.
+An inverter answers RTU on its RS-485 line, so how to name the link depends on
+what sits between you and that line, not on the inverter:
+
+| Between you and the line | Parameters |
+| :--- | :--- |
+| Nothing: a USB or serial adapter | `ModbusSerialParams(device="/dev/ttyUSB0")` |
+| A box forwarding the RTU frames | `ModbusSerialParams(device="socket://host:port")` |
+| A gateway answering Modbus TCP | `ModbusTcpParams(host=...)` |
+
+The second one is what `ModbusTcpParams(framer="rtu")` used to spell, which
+modbus-connection 4.12 deprecates: those frames are a serial line however they
+reach you, so a consumer pooling connections by endpoint opened two links onto
+one half-duplex bus when two callers spelled it differently.
+
+ASCII framing is unsupported either way. This library never accepts or forwards
+it, and it exposes no connect helper that could, since the caller builds the
+`ModbusUnit` and hands it over. An ASCII-framed link is untested here and
+nothing works around it.
 
 ## Attribution
 
