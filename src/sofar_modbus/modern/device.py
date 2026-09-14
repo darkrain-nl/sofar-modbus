@@ -64,10 +64,6 @@ if TYPE_CHECKING:
 _SET_TIME_REGISTER = 0x1004
 _IV_CURVE_SCAN_REGISTER = 0x1027
 
-# Half the link's own default. A 48-register block comes back in well
-# under a second, and every probe that must fail waits this out.
-_REQUEST_TIMEOUT = 5.0
-
 # Ported from the plugin's async_determineInverterType; ordered
 # longest-prefix-first so the first match is the most specific one.
 _SERIAL_PREFIXES: tuple[tuple[str, InverterType, str | None], ...] = (
@@ -119,7 +115,7 @@ class SofarInverter(Device):
         model: str | None = None,
         inverter_type: InverterType | None = None,
         read_pm: bool = False,
-        timeout: float | None = _REQUEST_TIMEOUT,
+        timeout: float | None = None,
     ) -> None:
         """Set up the sub-systems.
 
