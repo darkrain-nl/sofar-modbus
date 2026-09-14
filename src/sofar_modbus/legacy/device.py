@@ -49,6 +49,10 @@ _SERIAL_PREFIXES: tuple[tuple[str, InverterType], ...] = (
     ("SM1", PV),
 )
 
+# Half the link's own default. This generation reads wider blocks than
+# the current one, and still answers each in well under a second.
+_REQUEST_TIMEOUT = 5.0
+
 
 def identify(serial: str) -> InverterType:
     """The inverter type a serial number implies, or ``InverterType(0)``."""
@@ -70,8 +74,10 @@ class SofarLegacyInverter(Device):
         *,
         serial_number: str | None = None,
         inverter_type: InverterType | None = None,
+        timeout: float | None = _REQUEST_TIMEOUT,
     ) -> None:
         super().__init__(unit)
+        unit.require_timeout(timeout)
         self.serial_number = serial_number
         self.inverter_type = inverter_type
 

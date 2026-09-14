@@ -234,6 +234,22 @@ it, and it exposes no connect helper that could, since the caller builds the
 `ModbusUnit` and hands it over. An ASCII-framed link is untested here and
 nothing works around it.
 
+## How long a request waits
+
+Both device objects ask the link for a 5 second per-request timeout, through
+`ModbusUnit.require_timeout()`. A block comes back in well under a second (the
+widest one, 48 registers, measured 372 ms on a 4.4 KTLX-G3), and the timeout is
+spent per request, so the connection's own 10 second default is time a poll
+loses every time a register block goes unanswered. Setup pays it too: probing
+for off-grid registers, or for a battery tower that is not there, means waiting
+out the timeout on purpose.
+
+Pass `timeout=` to either constructor for a link that needs longer, or `None`
+to ask for nothing and leave the connection its own default. Two things to know
+before tuning it: the connection runs with the largest value any of its units
+asks for, so a device sharing the link can raise it, and a lowered value takes
+effect at the next connect rather than on the link already open.
+
 ## Attribution
 
 The register maps are derived from

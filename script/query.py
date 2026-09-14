@@ -97,10 +97,13 @@ async def main() -> int:
         return 1
 
     counting = CountingUnit(connection.for_unit(args.unit))
+    # --timeout floors the link, so the inverter must ask for the same
+    # value or its own, lower, request would never be the one that wins.
+    chosen = {} if args.timeout is None else {"timeout": args.timeout}
     inverter: Inverter = (
-        SofarLegacyInverter(counting)
+        SofarLegacyInverter(counting, **chosen)
         if args.legacy
-        else SofarInverter(counting, read_pm=args.pm)
+        else SofarInverter(counting, read_pm=args.pm, **chosen)
     )
     try:
         report = await inverter.async_update()  # the first update sets the inverter up
