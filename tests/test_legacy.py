@@ -135,7 +135,12 @@ async def test_a_probe_failure_other_than_absence_propagates(
     inverter = SofarLegacyInverter(mock_modbus_unit)
     with pytest.raises(ServerDeviceFailureError):
         await inverter.async_update()
-    assert inverter._polled is None  # setup did not complete; retry next time
+    assert inverter.storage_eps.eps_voltage is None
+
+    # Setup did not complete, so the next poll runs it again.
+    mock_modbus_unit.fail_read(0x0216, None)
+    report = await inverter.async_update()
+    assert "storage_block" in report.updated
 
 
 async def test_three_phase_pv(legacy_three_phase_pv: SofarLegacyInverter) -> None:
@@ -170,13 +175,7 @@ async def test_current_r_and_voltage_s_addresses(
 async def test_the_pv_only_component_applies_to_both_phase_counts(
     legacy_three_phase_pv: SofarLegacyInverter,
 ) -> None:
-    """Upstream marks these ``PV`` with no phase bit, so both variants read them.
-
-    On a three-phase inverter that means 0x001B/0x001C are read *as well as* the
-    three-phase temperatures at 0x001E/0x001F, and the two disagree. Both are
-    kept, on their own components, rather than one silently winning — the two
-    pool into one read, but each keeps its own field.
-    """
+    """The phase-specific temperatures disagree, and both readings stay."""
     report = await legacy_three_phase_pv.async_update()
     assert "pv_block" in report.updated
     assert legacy_three_phase_pv.pv_common.run_mode is PvRunMode.NORMAL_MODE

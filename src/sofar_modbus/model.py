@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from modbus_connection import ModbusError
-from modbus_connection.model import Component
+from modbus_connection.model import Component, UpdateReport
 
 from .variants import InverterType
+
+__all__ = [
+    "SofarComponent",
+    "SofarComponentBase",
+    "SofarLegacyComponent",
+    "TornReadCorrectedComponent",
+    "UpdateReport",
+]
 
 
 class SofarComponentBase(Component):
@@ -67,16 +73,3 @@ class TornReadCorrectedComponent(SofarComponent):
                 self._corrected[name] = raw
             else:
                 self._corrected[name] = high_water
-
-
-@dataclass(frozen=True)
-class UpdateReport:
-    """What one poll refreshed; a failed component keeps its prior values."""
-
-    updated: set[str]
-    failed: dict[str, ModbusError]
-
-    @property
-    def complete(self) -> bool:
-        """Whether every polled component refreshed."""
-        return not self.failed

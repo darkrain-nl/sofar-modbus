@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from modbus_connection import (
-    IllegalDataAddressError,
-    IllegalFunctionError,
-    ModbusConnectionError,
-    ModbusError,
-    ModbusTimeoutError,
-)
-from modbus_connection.model import ComponentGroup
+from modbus_connection import IllegalDataAddressError, IllegalFunctionError
+from modbus_connection.model import ComponentGroup, Device, Raw
 
-from ..model import SofarLegacyComponent, UpdateReport
+from ..model import UpdateReport
 from ..variants import EPS, HYBRID, PV, X1, X3, InverterType, matches
 from .identity import LegacyIdentity
 from .pv import HybridPvString1, HybridPvString2, PvCommon, SinglePhasePv, ThreePhasePv
@@ -63,7 +58,7 @@ def identify(serial: str) -> InverterType:
     return InverterType(0)
 
 
-class SofarLegacyInverter:
+class SofarLegacyInverter(Device):
     """An older Sofar inverter reached through a ``ModbusUnit``.
 
     Read-only, RTU only -- no writable registers, no ASCII over TCP.
@@ -76,7 +71,7 @@ class SofarLegacyInverter:
         serial_number: str | None = None,
         inverter_type: InverterType | None = None,
     ) -> None:
-        self._unit = unit
+        super().__init__(unit)
         self.serial_number = serial_number
         self.inverter_type = inverter_type
 
@@ -95,7 +90,7 @@ class SofarLegacyInverter:
         self.storage_block: ComponentGroup | None = None
         self.pv_block: ComponentGroup | None = None
 
-        self._polled: list[str] | None = None
+        self._polled: list[str] = []
 
     @property
     def pv_power_total(self) -> float | None:
@@ -158,7 +153,7 @@ class SofarLegacyInverter:
             setattr(
                 self,
                 pool,
-                ComponentGroup(self._unit, [getattr(self, n) for n in present]),
+                ComponentGroup(self.modbus_unit, [getattr(self, n) for n in present]),
             )
             stands_for |= dict.fromkeys(present, pool)
 
@@ -174,42 +169,15 @@ class SofarLegacyInverter:
 
         Same contract as ``SofarInverter``: a dead link raises.
         """
-        if self._polled is None:
-            await self._async_setup()
-            assert self._polled is not None
-        updated: set[str] = set()
-        failed: dict[str, ModbusError] = {}
-        for name in self._polled:
-            target: SofarLegacyComponent | ComponentGroup = getattr(self, name)
-            try:
-                await target.async_update(notify=False)
-            except ModbusConnectionError:
-                raise
-            except ModbusTimeoutError as err:
-                if not updated and not failed:
-                    raise  # nothing answered at all: assume the rest time out too
-                failed[name] = err
-            except ModbusError as err:
-                failed[name] = err
-            else:
-                updated.add(name)
-        for name in self._polled:
-            if name in updated:
-                fresh: SofarLegacyComponent | ComponentGroup = getattr(self, name)
-                fresh.notify()
-        return UpdateReport(updated, failed)
+        await self.async_ensure_setup()
+        return await self.async_poll(self._polled)
 
-    async def async_read_raw(self) -> dict[str, dict[int, int | bool]]:
+    async def async_read_raw(self, names: Iterable[str] | None = None) -> Raw:
         """Every register this inverter reads, undecoded, for diagnostics.
 
         Nothing notifies here: a diagnostics download is not a poll.
         """
-        if self._polled is None:
-            await self._async_setup()
-            assert self._polled is not None
-        raw: dict[str, dict[int, int | bool]] = {}
-        for name in ("identity", *self._polled):
-            target: SofarLegacyComponent | ComponentGroup = getattr(self, name)
-            for space, values in (await target.async_read_raw(notify=False)).items():
-                raw.setdefault(space, {}).update(values)
-        return raw
+        await self.async_ensure_setup()
+        if names is None:
+            names = ("identity", *self._polled)
+        return await super().async_read_raw(names)

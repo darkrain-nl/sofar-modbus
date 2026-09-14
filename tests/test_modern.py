@@ -249,7 +249,12 @@ async def test_a_probe_failure_other_than_absence_propagates(
     inverter = SofarInverter(mock_modbus_unit)
     with pytest.raises(ServerDeviceFailureError):
         await inverter.async_update()
-    assert inverter._readings is None  # setup did not complete; retry next time
+    assert inverter.readings_components == ()
+
+    # Setup did not complete, so the next poll runs it again.
+    mock_modbus_unit.fail_read(0x0504, None)
+    await inverter.async_update()
+    assert "offgrid" in inverter.readings_components
 
 
 async def test_off_grid_three_phase(hybrid: SofarInverter) -> None:
