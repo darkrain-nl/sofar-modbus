@@ -58,3 +58,6 @@ strict = true
 [tool.ruff.lint.per-file-ignores]
 # A test's name is its documentation; docstrings are for the ones that need a why.
 "tests/*" = ["D100", "D103", "D104"]
+# Most of TimedUnit is pass-throughs onto a documented protocol, and a
+# docstring on each would only repeat what ModbusUnit already says.
+"src/sofar_modbus/tuning.py" = ["D102"]

@@ -210,8 +210,10 @@ uv run script/query.py 192.168.1.50 --unit 1 --raw
 The two generations share serial prefixes, so the script does not guess which
 one it is talking to: pass `--legacy` for an older inverter. It prints the read
 count as well, so a poll's request budget is visible against real hardware
-rather than only in the tests. `--raw` adds every register it read, undecoded,
-which is what an issue about a wrong value should quote.
+rather than only in the tests. It follows the count with how long those reads
+took, median, p95 and slowest, which is what to judge a timeout against.
+`--raw` adds every register it read, undecoded, which is what an issue about a
+wrong value should quote.
 
 ## Naming the link
 
@@ -244,12 +246,74 @@ median 243 ms on a 4.4 KTLX-G3 over TCP, but what sits between it and you varies
 far more than the inverter does, so neither device object guesses a value. The
 connection's own default, 10 seconds, applies.
 
+Measure before choosing one. `sofar_modbus.tuning.TimedUnit` wraps a
+`ModbusUnit` and times every request that passes through it, which is where
+`query.py`'s numbers come from. Hand the wrapper to the inverter instead of the
+unit and read its `stats` for the same figures in your own application.
+
 A caller who has measured their link states it with `timeout=` on either
 constructor, which asks for it through `ModbusUnit.require_timeout()`. Two
 things to know before setting one: the connection runs with the largest value
 any of its units asks for, so a device sharing the link can raise it, and a
 lowered value takes effect at the next connect rather than on the link already
 open.
+
+### Or let the link say it itself
+
+`LinkTuner` does the measuring and the asking, for a caller that would rather
+not pick a number. Give it the same wrapper the inverter reads through, and
+hand it each poll's report:
+
+```python
+from sofar_modbus.tuning import LinkTuner, TimedUnit
+
+timed = TimedUnit(connection.for_unit(1))
+inverter = SofarInverter(timed)
+tuner = LinkTuner(timed)
+
+while True:
+    tuner.observe(await inverter.async_update_readings())
+```
+
+It tunes two things, from what the polls tell it.
+
+**The timeout.** After five polls with nothing timing out, it asks for four
+times the slowest request it saw, which on a link answering in 370 ms is about
+1.5 seconds instead of ten. It only ever lowers: a link too slow to be worth
+asking about keeps its own default, and a timeout under a value the tuner asked
+for withdraws that ask entirely and waits twice as long before trying again. So
+the worst it can do is hand the link back what it started with.
+
+**The gap between frames.** A device that cannot take requests back to back
+says so by answering the wrong exchange (`ModbusDesyncError`), by reporting
+itself busy, or by going quiet on a component that was answering a moment ago.
+A desync widens the gap at once, the other two after three polls, up to 200 ms.
+Twenty quiet polls give a step back, and each widening doubles the patience
+before that is tried again. A `budget=` caps the whole thing: the gap is never
+wider than that many seconds spread over the reads one poll makes, so a poll
+cannot outgrow its interval. Registers a model has never served are exempt,
+since chasing an absent block would widen the gap forever.
+
+**The pause after the link opens.** Some devices are not ready to answer the
+moment the socket is. Two opening requests that go unanswered earn a quarter
+second, then half, then one, then two. This one is never given back: it costs a
+single wait per connect, and a device that needed it still does.
+
+`tuner.tuning` is what it asks of the link and how often it has had to give up,
+which is worth putting in a diagnostics download, and worth storing:
+
+```python
+tuner.restore(saved)  # before the first poll
+...
+save(tuner.tuning)  # whenever it changes
+```
+
+Restoring brings back the patience that came with it, so a link that had to
+hand a timeout back is not asked the same question after every restart.
+
+The gap is per unit, so it paces this inverter's own frames and no one else's.
+A line shared with another device cannot be quieted from here, only from
+whoever builds the connection.
 
 ## Attribution
 
