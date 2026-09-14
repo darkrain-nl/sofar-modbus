@@ -234,6 +234,23 @@ it, and it exposes no connect helper that could, since the caller builds the
 `ModbusUnit` and hands it over. An ASCII-framed link is untested here and
 nothing works around it.
 
+## How long a request waits
+
+The timeout is spent per request, not per poll, so it is what a poll loses on
+every register block that goes unanswered. Setup spends it deliberately: probing
+for off-grid registers, or for a battery tower that is not there, means waiting
+one out. An inverter itself is quick, and a 48-register block came back in a
+median 243 ms on a 4.4 KTLX-G3 over TCP, but what sits between it and you varies
+far more than the inverter does, so neither device object guesses a value. The
+connection's own default, 10 seconds, applies.
+
+A caller who has measured their link states it with `timeout=` on either
+constructor, which asks for it through `ModbusUnit.require_timeout()`. Two
+things to know before setting one: the connection runs with the largest value
+any of its units asks for, so a device sharing the link can raise it, and a
+lowered value takes effect at the next connect rather than on the link already
+open.
+
 ## Attribution
 
 The register maps are derived from

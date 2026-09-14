@@ -115,12 +115,14 @@ class SofarInverter(Device):
         model: str | None = None,
         inverter_type: InverterType | None = None,
         read_pm: bool = False,
+        timeout: float | None = None,
     ) -> None:
         """Set up the sub-systems.
 
         ``read_pm`` reads parallel-system registers an inverter refuses.
         """
         super().__init__(unit)
+        unit.require_timeout(timeout)
         self._options = PM if read_pm else InverterType(0)
         self.model = model
         self.serial_number = serial_number

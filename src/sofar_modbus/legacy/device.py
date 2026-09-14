@@ -70,8 +70,10 @@ class SofarLegacyInverter(Device):
         *,
         serial_number: str | None = None,
         inverter_type: InverterType | None = None,
+        timeout: float | None = None,
     ) -> None:
         super().__init__(unit)
+        unit.require_timeout(timeout)
         self.serial_number = serial_number
         self.inverter_type = inverter_type
 
