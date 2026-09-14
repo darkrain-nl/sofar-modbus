@@ -298,16 +298,34 @@ class LinkTuner:
 
     def observe(self, report: UpdateReport) -> None:
         """Take one poll's outcome in, between polls and nowhere else."""
-        polled, self._reads = self._unit.reads - self._reads, self._unit.reads
-        # A high-water mark: a report carrying no reads of its own must not
-        # read as a cheap poll and hand the budget out to one wide gap.
-        self._reads_per_poll = max(self._reads_per_poll, polled)
+        self._count_reads()
         self._observe_spacing(report)
         self._observe_timeout(report)
         self._observe_opening()
         # A component has to have answered once for its silence to mean
         # anything, so this trails the poll that is being judged.
         self._answered |= report.updated
+
+    def observe_failure(self, err: ModbusError) -> None:
+        """Take in a poll that raised rather than reporting.
+
+        It named no component, so only the timing can be judged from it.
+        """
+        self._count_reads()
+        if isinstance(err, ModbusTimeoutError):
+            self._withdraw()
+        else:
+            # A link that is down says nothing about an ask being too
+            # tight, but it measured nothing either.
+            self._clean = 0
+        self._observe_opening()
+
+    def _count_reads(self) -> None:
+        """Take this poll's reads into the mark the gap's budget divides."""
+        polled, self._reads = self._unit.reads - self._reads, self._unit.reads
+        # A high-water mark: a poll carrying no reads of its own must not
+        # read as a cheap one and hand the budget out to a single wide gap.
+        self._reads_per_poll = max(self._reads_per_poll, polled)
 
     def _observe_spacing(self, report: UpdateReport) -> None:
         """Widen the gap for a line dropping frames, narrow it for a quiet one."""
