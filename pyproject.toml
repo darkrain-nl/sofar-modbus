@@ -16,7 +16,7 @@ classifiers = [
     "Topic :: Home Automation",
 ]
 # The caller injects a ModbusUnit; tmodbus is the backend this is exercised against.
-dependencies = ["modbus-connection[tmodbus]>=4.7.0"]
+dependencies = ["modbus-connection[tmodbus]>=4.12.1"]
 
 [project.urls]
 Homepage = "https://github.com/darkrain-nl/sofar-modbus"
