@@ -210,8 +210,10 @@ uv run script/query.py 192.168.1.50 --unit 1 --raw
 The two generations share serial prefixes, so the script does not guess which
 one it is talking to: pass `--legacy` for an older inverter. It prints the read
 count as well, so a poll's request budget is visible against real hardware
-rather than only in the tests. `--raw` adds every register it read, undecoded,
-which is what an issue about a wrong value should quote.
+rather than only in the tests. It follows the count with how long those reads
+took, median, p95 and slowest, which is what to judge a timeout against.
+`--raw` adds every register it read, undecoded, which is what an issue about a
+wrong value should quote.
 
 ## Naming the link
 
@@ -243,6 +245,11 @@ one out. An inverter itself is quick, and a 48-register block came back in a
 median 243 ms on a 4.4 KTLX-G3 over TCP, but what sits between it and you varies
 far more than the inverter does, so neither device object guesses a value. The
 connection's own default, 10 seconds, applies.
+
+Measure before choosing one. `sofar_modbus.tuning.TimedUnit` wraps a
+`ModbusUnit` and times every request that passes through it, which is where
+`query.py`'s numbers come from. Hand the wrapper to the inverter instead of the
+unit and read its `stats` for the same figures in your own application.
 
 A caller who has measured their link states it with `timeout=` on either
 constructor, which asks for it through `ModbusUnit.require_timeout()`. Two

@@ -11,7 +11,6 @@ import logging
 
 from modbus_connection import ModbusError
 from modbus_connection.cli_helper import (
-    CountingUnit,
     add_connection_args,
     connect_from_args,
     print_component,
@@ -24,6 +23,7 @@ from sofar_modbus import (
     SofarLegacyInverter,
     matches,
 )
+from sofar_modbus.tuning import LinkStats, TimedUnit
 
 # An inverter's RS-485 line, direct or through a socket:// device, and
 # the gateways answering Modbus TCP themselves. No ASCII: the library
@@ -38,6 +38,17 @@ EXAMPLES = """examples:
   uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
   uv run script/query.py 192.168.1.50 --unit 1 --raw
 """
+
+
+def _timings(stats: LinkStats) -> str:
+    """The poll's latency, for judging a timeout against the link."""
+    if stats.median is None or stats.p95 is None or stats.slowest is None:
+        return "nothing answered"
+    return (
+        f"median {stats.median * 1000:.0f} ms, "
+        f"p95 {stats.p95 * 1000:.0f} ms, "
+        f"slowest {stats.slowest * 1000:.0f} ms"
+    )
 
 
 def served_components(inverter: Inverter) -> list[tuple[str, Component]]:
@@ -96,18 +107,21 @@ async def main() -> int:
         print(f"Could not connect to {args.target}: {detail}")
         return 1
 
-    counting = CountingUnit(connection.for_unit(args.unit))
+    timed = TimedUnit(connection.for_unit(args.unit))
     inverter: Inverter = (
-        SofarLegacyInverter(counting)
+        SofarLegacyInverter(timed)
         if args.legacy
-        else SofarInverter(counting, read_pm=args.pm)
+        else SofarInverter(timed, read_pm=args.pm)
     )
     try:
         report = await inverter.async_update()  # the first update sets the inverter up
-        poll_reads = counting.reads  # a raw dump re-reads, so count the poll alone
+        # A raw dump re-reads everything, so measure the poll alone.
+        poll_reads, poll_stats = timed.reads, timed.stats
         raw = await inverter.async_read_raw() if args.raw else None
     except ModbusError as err:
         print(f"Could not read the inverter: {str(err) or type(err).__name__}")
+        # A poll that gave up is exactly when its timings are worth seeing.
+        print(f"{timed.reads} Modbus reads, {_timings(timed.stats)}")
         return 1
     finally:
         await connection.close()
@@ -128,7 +142,7 @@ async def main() -> int:
         print("\nRaw registers")
         # The dump arrives address-ordered; sorting keys would undo that.
         print(json.dumps(raw, indent=2))
-    print(f"\n{poll_reads} Modbus reads")
+    print(f"\n{poll_reads} Modbus reads, {_timings(poll_stats)}")
     return 0
 
 
