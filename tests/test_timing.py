@@ -3,11 +3,23 @@
 from __future__ import annotations
 
 import pytest
-from modbus_connection import ModbusTimeoutError, ModbusUnit
+from modbus_connection import (
+    IllegalDataAddressError,
+    ModbusTimeoutError,
+    ModbusUnit,
+)
 from modbus_connection.mock import MockModbusUnit
+from modbus_connection.model import UpdateReport
 
 from sofar_modbus import SofarInverter, SofarLegacyInverter
-from sofar_modbus.tuning import TimedUnit
+from sofar_modbus.tuning import (
+    CLEAN_POLLS,
+    FLOOR,
+    LinkTuner,
+    LinkTuning,
+    TimedUnit,
+    target_timeout,
+)
 
 from .conftest import MODERN_HOLDING
 
@@ -112,3 +124,108 @@ def test_link_settings_reach_the_wrapped_unit(
     assert mock_modbus_unit.message_spacing == 0.05
     assert mock_modbus_unit.required_timeout == 3.0
     assert mock_modbus_unit.required_connect_delay == 1.0
+
+
+async def _poll(inverter: SofarInverter, tuner: LinkTuner) -> None:
+    """One clean poll, observed the way a coordinator would."""
+    tuner.observe(await inverter.async_update())
+
+
+def _timed_out() -> UpdateReport:
+    return UpdateReport({"grid"}, {"state": ModbusTimeoutError("no answer")})
+
+
+@pytest.fixture
+def tuned(mock_modbus_unit: MockModbusUnit) -> tuple[SofarInverter, LinkTuner]:
+    """An inverter polling through a timed unit, with a tuner watching."""
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    timed = TimedUnit(mock_modbus_unit)
+    return SofarInverter(timed, read_pm=True), LinkTuner(timed)
+
+
+def test_a_target_leaves_room_over_the_slowest_answer() -> None:
+    assert target_timeout(0.4) == pytest.approx(1.6)
+
+
+def test_a_quick_link_still_gets_the_floor() -> None:
+    """Four times nothing is not a timeout to hold a device to."""
+    assert target_timeout(0.01) == FLOOR
+
+
+def test_a_slow_link_is_left_its_own_default() -> None:
+    assert target_timeout(3.0) is None
+    assert target_timeout(None) is None
+
+
+async def test_nothing_is_asked_until_the_link_has_been_quiet(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    inverter, tuner = tuned
+    for _ in range(CLEAN_POLLS - 1):
+        await _poll(inverter, tuner)
+
+    assert tuner.tuning.timeout is None
+    assert mock_modbus_unit.required_timeout is None
+
+
+async def test_a_quiet_link_is_asked_for_what_it_measured(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    inverter, tuner = tuned
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+
+    assert tuner.tuning.timeout == FLOOR  # the mock answers instantly
+    assert mock_modbus_unit.required_timeout == FLOOR
+
+
+async def test_a_timeout_hands_the_link_back_its_own(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    inverter, tuner = tuned
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+    tuner.observe(_timed_out())
+
+    assert tuner.tuning == LinkTuning(timeout=None, withdrawals=1)
+    assert mock_modbus_unit.required_timeout is None
+
+
+async def test_a_withdrawal_makes_the_next_attempt_wait_longer(
+    tuned: tuple[SofarInverter, LinkTuner],
+) -> None:
+    inverter, tuner = tuned
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+    tuner.observe(_timed_out())
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+
+    assert tuner.tuning.timeout is None  # five clean polls no longer earn it
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+    assert tuner.tuning.timeout == FLOOR
+
+
+async def test_a_timeout_the_tuner_did_not_cause_is_not_its_own(
+    tuned: tuple[SofarInverter, LinkTuner],
+) -> None:
+    """Nothing was asked, so the device timing out says nothing about us."""
+    inverter, tuner = tuned
+    tuner.observe(_timed_out())
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+
+    assert tuner.tuning == LinkTuning(timeout=FLOOR, withdrawals=0)
+
+
+async def test_a_refused_register_is_not_a_slow_link(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    """An inverter answering "no such register" answered, and quickly."""
+    inverter, tuner = tuned
+    for _ in range(CLEAN_POLLS - 1):
+        await _poll(inverter, tuner)
+    tuner.observe(UpdateReport({"grid"}, {"eps": IllegalDataAddressError()}))
+
+    assert mock_modbus_unit.required_timeout == FLOOR

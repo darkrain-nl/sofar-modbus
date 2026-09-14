@@ -1,4 +1,4 @@
-"""What a link is doing, measured through the unit a device reads from."""
+"""Measure a link through a device's unit, and ask it for what it needs."""
 
 from __future__ import annotations
 
@@ -9,10 +9,11 @@ from dataclasses import dataclass
 from statistics import median
 from typing import TYPE_CHECKING
 
-from modbus_connection import ModbusError
+from modbus_connection import ModbusError, ModbusTimeoutError
 
 if TYPE_CHECKING:
     from modbus_connection import ModbusUnit
+    from modbus_connection.model import UpdateReport
 
 WINDOW = 200
 """Requests kept for the statistics, roughly twenty polls of an inverter."""
@@ -175,3 +176,100 @@ def _percentile(answered: list[float], fraction: float) -> float | None:
     if not answered:
         return None
     return answered[min(len(answered) - 1, int(len(answered) * fraction))]
+
+
+MARGIN = 4.0
+"""Headroom over the slowest request that answered."""
+
+FLOOR = 0.5
+"""The shortest timeout worth asking for, whatever the window says."""
+
+MAX_ASK = 10.0
+"""The link's own default: asking for this or more would change nothing."""
+
+MIN_ANSWERED = 20
+"""Answered requests before the window says anything about the link."""
+
+CLEAN_POLLS = 5
+"""Polls without a timeout before the tuner acts on what it measured."""
+
+MAX_CLEAN_POLLS = 80
+"""The longest wait a link that keeps timing out is made to serve."""
+
+WORTH_ASKING = 0.75
+"""A new target is only asked for below this much of the standing one."""
+
+
+def target_timeout(slowest: float | None) -> float | None:
+    """The timeout this slowest answer earns, or ``None`` to ask nothing.
+
+    Nothing measured, or a link whose own default is the honest answer.
+    """
+    if slowest is None:
+        return None
+    target = max(slowest * MARGIN, FLOOR)
+    # Rounded because this value is read by people, in logs and diagnostics.
+    return None if target >= MAX_ASK else round(target, 2)
+
+
+@dataclass(frozen=True)
+class LinkTuning:
+    """What the tuner asks of a link, and how often it has withdrawn."""
+
+    timeout: float | None = None
+    withdrawals: int = 0
+
+
+class LinkTuner:
+    """Ask a link for the timeout its own traffic says it needs.
+
+    It only lowers; a timeout under a lowered value withdraws the ask.
+    """
+
+    def __init__(self, unit: TimedUnit) -> None:
+        self._unit = unit
+        self._asked: float | None = None
+        self._withdrawals = 0
+        self._clean = 0
+        self._required = CLEAN_POLLS
+
+    @property
+    def tuning(self) -> LinkTuning:
+        """What is being asked of the link as things stand."""
+        return LinkTuning(self._asked, self._withdrawals)
+
+    def observe(self, report: UpdateReport) -> None:
+        """Take one poll's outcome in, between polls and nowhere else."""
+        if any(isinstance(err, ModbusTimeoutError) for err in report.failed.values()):
+            self._withdraw()
+            return
+        self._clean += 1
+        if self._clean < self._required:
+            return
+        stats = self._unit.stats
+        if stats.answered < MIN_ANSWERED:
+            return
+        target = target_timeout(stats.slowest)
+        if target is None:
+            return
+        if self._asked is None or target < self._asked * WORTH_ASKING:
+            self._ask(target)
+
+    def _ask(self, seconds: float) -> None:
+        """Lower the link's timeout, and earn the next lowering again."""
+        self._unit.require_timeout(seconds)
+        self._asked = seconds
+        self._clean = 0
+
+    def _withdraw(self) -> None:
+        """Hand the link back its own timeout, and wait longer next time.
+
+        A timeout while nothing was asked is the device's, not ours.
+        """
+        self._clean = 0
+        if self._asked is None:
+            return
+        self._unit.require_timeout(None)
+        self._asked = None
+        self._withdrawals += 1
+        self._required = min(self._required * 2, MAX_CLEAN_POLLS)

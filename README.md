@@ -258,6 +258,33 @@ any of its units asks for, so a device sharing the link can raise it, and a
 lowered value takes effect at the next connect rather than on the link already
 open.
 
+### Or let the link say it itself
+
+`LinkTuner` does the measuring and the asking, for a caller that would rather
+not pick a number. Give it the same wrapper the inverter reads through, and
+hand it each poll's report:
+
+```python
+from sofar_modbus.tuning import LinkTuner, TimedUnit
+
+timed = TimedUnit(connection.for_unit(1))
+inverter = SofarInverter(timed)
+tuner = LinkTuner(timed)
+
+while True:
+    tuner.observe(await inverter.async_update_readings())
+```
+
+After five polls with nothing timing out, it asks for four times the slowest
+request it saw, which on a link answering in 370 ms is about 1.5 seconds
+instead of ten. It only ever lowers: a link too slow to be worth asking about
+keeps its own default, and a timeout under a value the tuner asked for
+withdraws that ask entirely and waits twice as long before trying again. So
+the worst it can do is hand the link back what it started with.
+
+`tuner.tuning` is what it is asking for and how often it has had to give up,
+which is worth putting in a diagnostics download.
+
 ## Attribution
 
 The register maps are derived from
