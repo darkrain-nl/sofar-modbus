@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
+    ModbusConnectionError,
     ModbusDesyncError,
     ModbusTimeoutError,
     ModbusUnit,
@@ -448,3 +449,83 @@ async def test_a_restored_run_keeps_the_patience_it_paid_for(
     for _ in range(CLEAN_POLLS * 3):
         await _poll(inverter, tuner)
     assert tuner.tuning.timeout == FLOOR
+
+
+async def test_a_poll_that_raised_a_timeout_hands_the_link_back_its_own(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A link degrading past the ask times out before it names a component."""
+    inverter, tuner = tuned
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+    assert mock_modbus_unit.required_timeout == FLOOR
+
+    mock_modbus_unit.fail_requests(ModbusTimeoutError("link degraded"))
+    with pytest.raises(ModbusTimeoutError) as raised:
+        await inverter.async_update_readings()
+    tuner.observe_failure(raised.value)
+
+    assert tuner.tuning == LinkTuning(withdrawals=1)
+    assert mock_modbus_unit.required_timeout is None
+
+
+async def test_a_raised_timeout_buys_the_same_patience_a_reported_one_does(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    inverter, tuner = tuned
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+    tuner.observe_failure(ModbusTimeoutError("link degraded"))
+
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+    assert tuner.tuning.timeout is None  # five clean polls no longer earn it
+
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+    assert tuner.tuning.timeout == FLOOR
+
+
+async def test_a_dead_link_is_not_evidence_the_ask_was_too_tight(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    inverter, tuner = tuned
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+    tuner.observe_failure(ModbusConnectionError("link down"))
+
+    assert tuner.tuning == LinkTuning(timeout=FLOOR)
+    assert mock_modbus_unit.required_timeout == FLOOR
+
+
+async def test_a_raised_poll_still_feeds_the_connect_delay_ladder(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    """The reads happened, so what they say about opening the link stands."""
+    inverter, tuner = tuned
+    mock_modbus_unit.fail_requests(ModbusTimeoutError("not ready yet"))
+    for _ in range(FAILED_OPENS):
+        await mock_modbus_unit.disconnect()
+        with pytest.raises(ModbusTimeoutError) as raised:
+            await inverter.async_update_readings()
+        tuner.observe_failure(raised.value)
+
+    assert tuner.tuning.connect_delay == CONNECT_DELAYS[0]
+    assert mock_modbus_unit.required_connect_delay == CONNECT_DELAYS[0]
+
+
+async def test_a_raised_poll_is_not_a_quiet_one(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    """Or a link too broken to poll would earn a narrower gap by failing."""
+    inverter, tuner = tuned
+    await _poll(inverter, tuner)
+    tuner.observe(_desynced())
+    widened = tuner.tuning.spacing
+
+    for _ in range(QUIET_POLLS * 2):
+        tuner.observe_failure(ModbusConnectionError("link down"))
+
+    assert widened == SPACING_STEPS[0]
+    assert tuner.tuning.spacing == widened
+    assert mock_modbus_unit.message_spacing == widened

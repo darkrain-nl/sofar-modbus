@@ -272,8 +272,18 @@ inverter = SofarInverter(timed)
 tuner = LinkTuner(timed)
 
 while True:
-    tuner.observe(await inverter.async_update_readings())
+    try:
+        tuner.observe(await inverter.async_update_readings())
+    except ModbusError as err:
+        tuner.observe_failure(err)
+        raise
 ```
+
+Both halves matter. A poll gives up and raises rather than reporting when the
+link is down, or when it times out before anything has answered, and that
+second case is exactly what a timeout asked for too tightly looks like. A
+consumer that only calls `observe()` would leave the tuner holding an ask the
+link can no longer meet.
 
 It tunes two things, from what the polls tell it.
 
@@ -281,8 +291,9 @@ It tunes two things, from what the polls tell it.
 times the slowest request it saw, which on a link answering in 370 ms is about
 1.5 seconds instead of ten. It only ever lowers: a link too slow to be worth
 asking about keeps its own default, and a timeout under a value the tuner asked
-for withdraws that ask entirely and waits twice as long before trying again. So
-the worst it can do is hand the link back what it started with.
+for withdraws that ask entirely and waits twice as long before trying again,
+whether the poll reported that timeout or raised it. So the worst it can do is
+hand the link back what it started with.
 
 **The gap between frames.** A device that cannot take requests back to back
 says so by answering the wrong exchange (`ModbusDesyncError`), by reporting
