@@ -202,7 +202,7 @@ def hybrid(mock_modbus_unit: MockModbusUnit) -> SofarInverter:
     """A three-phase HYD hybrid; EPS is auto-probed, PM enabled."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     mock_modbus_unit.holding.update(BATTERY_PACK_HOLDING)
-    return SofarInverter(mock_modbus_unit, read_pm=True)
+    return SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL, read_pm=True)
 
 
 @pytest.fixture
@@ -210,7 +210,7 @@ def legacy_hybrid(mock_modbus_unit: MockModbusUnit) -> SofarLegacyInverter:
     """An older single-phase storage inverter; EPS is auto-probed."""
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
     mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
-    return SofarLegacyInverter(mock_modbus_unit)
+    return SofarLegacyInverter(mock_modbus_unit, serial_number=LEGACY_HYBRID_SERIAL)
 
 
 @pytest.fixture
@@ -218,4 +218,6 @@ def legacy_three_phase_pv(mock_modbus_unit: MockModbusUnit) -> SofarLegacyInvert
     """An older three-phase PV inverter."""
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
     mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_THREE_PHASE_PV_SERIAL, 6)
-    return SofarLegacyInverter(mock_modbus_unit)
+    return SofarLegacyInverter(
+        mock_modbus_unit, serial_number=LEGACY_THREE_PHASE_PV_SERIAL
+    )

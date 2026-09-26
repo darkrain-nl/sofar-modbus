@@ -15,7 +15,7 @@ from modbus_connection.mock import MockModbusUnit
 from sofar_modbus import SofarInverter
 from sofar_modbus.variants import GEN, PV, X1
 
-from .conftest import MODERN_HOLDING
+from .conftest import HYBRID_SERIAL, MODERN_HOLDING
 
 # Captured from a 4.4 KTLX-G3; pins the register order against hardware.
 GRID_OUTPUT_MASK = [0x1C00, 0x8218, 0x4308, 0x617F]
@@ -52,7 +52,9 @@ TOWER_BLOCKS = [0x9000, 0x9040]
 def pv_inverter(mock_modbus_unit: MockModbusUnit) -> SofarInverter:
     """A PV-only inverter, which has no battery tower to ask about."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
-    return SofarInverter(mock_modbus_unit, inverter_type=PV | X1)
+    return SofarInverter(
+        mock_modbus_unit, serial_number=HYBRID_SERIAL, inverter_type=PV | X1
+    )
 
 
 async def test_a_mask_decodes_most_significant_register_first(
@@ -116,12 +118,13 @@ async def test_the_tower_blocks_are_read_for_a_battery_tower(
     assert sorted(await hybrid.async_read_masks()) == MODELED_BLOCKS + TOWER_BLOCKS
 
 
-async def test_reading_masks_sets_the_inverter_up_first(
-    pv_inverter: SofarInverter,
+async def test_reading_masks_needs_no_setup(
+    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    """Whether a tower exists is only known once setup has run."""
+    """The serial settles the tower, so no EPS probe precedes a download."""
     await pv_inverter.async_read_masks()
-    assert pv_inverter.serial_number == "SP1ES12345678"
+    assert pv_inverter.readings_components == ()
+    assert all(event.address & 0x3F == 0 for event in mock_modbus_unit.read_events)
 
 
 async def test_a_denied_meter_block_is_not_polled(
@@ -192,7 +195,9 @@ async def test_a_model_without_the_component_is_not_asked(
 ) -> None:
     """No point paying for a mask read to gate what is never polled."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
-    device = SofarInverter(mock_modbus_unit, inverter_type=GEN | X1)
+    device = SofarInverter(
+        mock_modbus_unit, serial_number=HYBRID_SERIAL, inverter_type=GEN | X1
+    )
     await device.async_update()
     assert "meter_energy" not in device.readings_components
     assert not any(event.address == 0x0680 for event in mock_modbus_unit.read_events)

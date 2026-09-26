@@ -32,14 +32,15 @@ def test_identify_maps_serial_prefixes() -> None:
     assert identify("WHAT") == InverterType(0)
 
 
-async def test_setup_strips_the_padding_the_boards_add(
+async def test_detect_strips_the_padding_the_boards_add(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """The plugin runs the serial through a character filter; so do we."""
     mock_modbus_unit.input[0x2002] = ascii_words("SM1E\x01234567\x02", 6)
-    inverter = SofarLegacyInverter(mock_modbus_unit)
+    inverter = await SofarLegacyInverter.async_detect(mock_modbus_unit)
     await inverter._async_setup()
     assert inverter.serial_number == "SM1E234567"
+    assert inverter.identity.serial_number == "SM1E\x01234567\x02"
     # A hybrid always gets probed; the mock answers 0 for unset registers.
     assert inverter.inverter_type == HYBRID | X1 | EPS
 
@@ -95,11 +96,10 @@ async def test_the_eps_probe_detects_presence(
 ) -> None:
     """A hybrid inverter that answers the EPS registers gets EPS set."""
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
-    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
-    inverter = SofarLegacyInverter(mock_modbus_unit)
+    inverter = SofarLegacyInverter(mock_modbus_unit, serial_number=LEGACY_HYBRID_SERIAL)
     await inverter.async_update()
     assert inverter.storage_eps.eps_voltage == pytest.approx(228.0)
-    assert EPS in (inverter.inverter_type or InverterType(0))
+    assert EPS in inverter.inverter_type
 
 
 @pytest.mark.parametrize("error", [IllegalDataAddressError(), IllegalFunctionError()])
@@ -108,12 +108,11 @@ async def test_the_eps_probe_detects_absence(
 ) -> None:
     """Either exception code means the EPS registers do not exist."""
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
-    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
     mock_modbus_unit.fail_read(0x0216, error)
-    inverter = SofarLegacyInverter(mock_modbus_unit)
+    inverter = SofarLegacyInverter(mock_modbus_unit, serial_number=LEGACY_HYBRID_SERIAL)
     await inverter.async_update()
     assert inverter.storage_eps.eps_voltage is None
-    assert EPS not in (inverter.inverter_type or InverterType(0))
+    assert EPS not in inverter.inverter_type
 
 
 async def test_the_eps_probe_is_skipped_for_a_pv_only_inverter(
@@ -121,8 +120,9 @@ async def test_the_eps_probe_is_skipped_for_a_pv_only_inverter(
 ) -> None:
     """A PV-only inverter can never have EPS, so it is never probed."""
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
-    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_THREE_PHASE_PV_SERIAL, 6)
-    inverter = SofarLegacyInverter(mock_modbus_unit)
+    inverter = SofarLegacyInverter(
+        mock_modbus_unit, serial_number=LEGACY_THREE_PHASE_PV_SERIAL
+    )
     await inverter.async_update()
     assert not any(e.address == 0x0216 for e in mock_modbus_unit.read_events)
 
@@ -132,9 +132,8 @@ async def test_a_probe_failure_other_than_absence_propagates(
 ) -> None:
     """A real device error is not mistaken for "no EPS" and swallowed."""
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
-    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
     mock_modbus_unit.fail_read(0x0216, ServerDeviceFailureError())
-    inverter = SofarLegacyInverter(mock_modbus_unit)
+    inverter = SofarLegacyInverter(mock_modbus_unit, serial_number=LEGACY_HYBRID_SERIAL)
     with pytest.raises(ServerDeviceFailureError):
         await inverter.async_update()
     assert inverter.storage_eps.eps_voltage is None
@@ -200,15 +199,18 @@ async def test_an_ac_coupled_inverter_reads_the_input_register_setting(
 ) -> None:
     """``battery_minimum_capacity`` is AC-only, and in the input space."""
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
-    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_THREE_PHASE_PV_SERIAL, 6)
     mock_modbus_unit.input[0x104D] = 20
-    inverter = SofarLegacyInverter(mock_modbus_unit, inverter_type=AC | X1)
+    inverter = SofarLegacyInverter(
+        mock_modbus_unit,
+        serial_number=LEGACY_THREE_PHASE_PV_SERIAL,
+        inverter_type=AC | X1,
+    )
     await inverter.async_update()
     assert inverter.battery_settings.battery_minimum_capacity == 20
     assert inverter.storage.run_mode is StorageRunMode.NORMAL_MODE
 
 
-async def test_constructor_identity_skips_serial_number_read(
+async def test_setup_never_reads_the_serial_number(
     legacy_hybrid: SofarLegacyInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
     """Identity given to the constructor still gets probed for EPS."""
@@ -228,7 +230,7 @@ async def test_constructor_identity_skips_serial_number_read(
     assert device.inverter_type == legacy_hybrid.inverter_type
 
 
-# --- what setup logs -------------------------------------------------
+# --- what detection and setup log ------------------------------------
 
 
 def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -237,11 +239,14 @@ def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
     ]
 
 
-async def test_setup_logs_what_it_detected(
-    legacy_hybrid: SofarLegacyInverter, caplog: pytest.LogCaptureFixture
+async def test_detection_and_setup_log_what_they_found(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
-    await legacy_hybrid.async_update()
+    mock_modbus_unit.holding.update(LEGACY_HOLDING)
+    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
+    inverter = await SofarLegacyInverter.async_detect(mock_modbus_unit)
+    await inverter.async_update()
 
     assert _logged(caplog) == [
         "Serial SM1E12345678 identifies as X1|HYBRID",
@@ -256,7 +261,8 @@ async def test_an_unknown_serial_is_logged(
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
     mock_modbus_unit.input[0x2002] = ascii_words("WHAT00000000", 6)
-    await SofarLegacyInverter(mock_modbus_unit).async_update()
+    inverter = await SofarLegacyInverter.async_detect(mock_modbus_unit)
+    await inverter.async_update()
 
     assert _logged(caplog) == [
         "Serial WHAT00000000 matches no known model",
@@ -269,9 +275,9 @@ async def test_refused_eps_registers_are_logged(
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
-    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
     mock_modbus_unit.fail_read(0x0216, IllegalDataAddressError())
-    await SofarLegacyInverter(mock_modbus_unit).async_update()
+    inverter = SofarLegacyInverter(mock_modbus_unit, serial_number="SM1E12345678")
+    await inverter.async_update()
 
     assert _logged(caplog)[1].startswith(
         "Inverter SM1E12345678 refuses the EPS registers: "

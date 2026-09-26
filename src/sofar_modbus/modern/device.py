@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from modbus_connection import (
     IllegalDataAddressError,
@@ -119,7 +119,7 @@ class SofarInverter(Device):
         self,
         unit: ModbusUnit,
         *,
-        serial_number: str | None = None,
+        serial_number: str,
         model: str | None = None,
         inverter_type: InverterType | None = None,
         read_pm: bool = False,
@@ -131,12 +131,21 @@ class SofarInverter(Device):
         """
         super().__init__(unit)
         unit.require_timeout(timeout)
-        self._options = PM if read_pm else InverterType(0)
-        self.model = model
+        detected, detected_model = identify(serial_number)
+        if inverter_type is None:
+            if detected:
+                _LOGGER.debug(
+                    "Serial %s identifies as %s, model %s",
+                    serial_number,
+                    detected.name,
+                    detected_model,
+                )
+            else:
+                _LOGGER.debug("Serial %s matches no known model", serial_number)
+            inverter_type = detected
         self.serial_number = serial_number
-        self.inverter_type = (
-            inverter_type | self._options if inverter_type is not None else None
-        )
+        self.model = model if model is not None else detected_model
+        self.inverter_type = inverter_type | (PM if read_pm else InverterType(0))
 
         self.state = InverterState(unit)
         self.rating = InverterRating(unit)
@@ -175,10 +184,30 @@ class SofarInverter(Device):
         self._settings: list[str] = []
         self._packs_answering: dict[tuple[int, int], bool] = {}
 
+    @classmethod
+    async def async_detect(
+        cls,
+        unit: ModbusUnit,
+        *,
+        read_pm: bool = False,
+        timeout: float | None = None,
+    ) -> Self:
+        """Build an inverter for a caller that does not know its serial."""
+        unit.require_timeout(timeout)
+        identity = Identity(unit)
+        await identity.async_update(notify=False)
+        serial_number = identity.serial_number
+        assert serial_number is not None
+        device = cls(
+            unit, serial_number=serial_number, read_pm=read_pm, timeout=timeout
+        )
+        device.identity = identity
+        return device
+
     @property
     def has_battery_tower(self) -> bool:
         """Whether this inverter reports a BTS battery tower."""
-        return self.inverter_type is not None and BAT_BTS in self.inverter_type
+        return BAT_BTS in self.inverter_type
 
     @property
     def settings_components(self) -> tuple[str, ...]:
@@ -191,39 +220,14 @@ class SofarInverter(Device):
         return tuple(self._readings)
 
     async def _async_setup(self) -> None:
-        """Read the serial number, settle the model, and pick what to poll."""
+        """Settle which optional sub-systems this inverter serves."""
         await self.rating.async_update(notify=False)
-        if self.serial_number is None:
-            await self.identity.async_update(notify=False)
-            self.serial_number = self.identity.serial_number
-            assert self.serial_number is not None
-        if self.inverter_type is None:
-            detected, model = identify(self.serial_number)
-            if detected:
-                _LOGGER.debug(
-                    "Serial %s identifies as %s, model %s",
-                    self.serial_number,
-                    detected.name,
-                    model,
-                )
-            else:
-                _LOGGER.debug("Serial %s matches no known model", self.serial_number)
-            self.inverter_type = detected | self._options
-            if self.model is None:
-                self.model = model
-        elif self.model is None:
-            _, model = identify(self.serial_number)
-            if model is not None:
-                self.model = model
-        inverter_type = self.inverter_type
-        assert inverter_type is not None
         if (
-            EPS not in inverter_type
-            and matches(inverter_type, self.offgrid.applies_to & ~EPS)
+            EPS not in self.inverter_type
+            and matches(self.inverter_type, self.offgrid.applies_to & ~EPS)
             and await self._async_probe_eps()
         ):
-            inverter_type |= EPS
-            self.inverter_type = inverter_type
+            self.inverter_type |= EPS
         self._readings = [
             name
             for name in (
@@ -245,7 +249,7 @@ class SofarInverter(Device):
                 "meter_energy",
                 "battery_energy",
             )
-            if matches(inverter_type, getattr(self, name).applies_to)
+            if matches(self.inverter_type, getattr(self, name).applies_to)
         ]
         await self._async_drop_denied_components()
         self._settings = [
@@ -263,12 +267,12 @@ class SofarInverter(Device):
                 "charger",
                 "passive",
             )
-            if matches(inverter_type, getattr(self, name).applies_to)
+            if matches(self.inverter_type, getattr(self, name).applies_to)
         ]
         _LOGGER.debug(
             "Inverter %s is %s, model %s; readings: %s; settings: %s",
             self.serial_number,
-            inverter_type.name or "an unknown type",
+            self.inverter_type.name or "an unknown type",
             self.model,
             ", ".join(self._readings) or "nothing",
             ", ".join(self._settings) or "nothing",
@@ -347,7 +351,6 @@ class SofarInverter(Device):
 
         Blocks answering none are left out; the tower's cost a timeout.
         """
-        await self.async_ensure_setup()
         bases = MASK_BLOCKS
         if self.has_battery_tower:
             bases += TOWER_MASK_BLOCKS

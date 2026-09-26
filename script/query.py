@@ -108,12 +108,12 @@ async def main() -> int:
         return 1
 
     timed = TimedUnit(connection.for_unit(args.unit))
-    inverter: Inverter = (
-        SofarLegacyInverter(timed)
-        if args.legacy
-        else SofarInverter(timed, read_pm=args.pm)
-    )
     try:
+        inverter: Inverter = (
+            await SofarLegacyInverter.async_detect(timed)
+            if args.legacy
+            else await SofarInverter.async_detect(timed, read_pm=args.pm)
+        )
         report = await inverter.async_update()  # the first update sets the inverter up
         # A raw dump re-reads everything, so measure the poll alone.
         poll_reads, poll_stats = timed.reads, timed.stats
@@ -129,8 +129,7 @@ async def main() -> int:
     print(f"Serial number  {inverter.serial_number}")
     if isinstance(inverter, SofarInverter):
         print(f"Model          {inverter.model}")
-    if inverter.inverter_type is not None:
-        print(f"Type           {inverter.inverter_type.name}")
+    print(f"Type           {inverter.inverter_type.name}")
     for name, component in served_components(inverter):
         print()
         print_component(component, title=name)

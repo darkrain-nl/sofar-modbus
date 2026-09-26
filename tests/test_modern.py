@@ -66,14 +66,52 @@ def test_the_longer_prefix_wins() -> None:
     assert BAT_BTS in generic
 
 
-async def test_setup_reads_the_serial_and_settles_the_model(
+async def test_detect_reads_the_serial_and_settles_the_model(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    inverter = await SofarInverter.async_detect(mock_modbus_unit, read_pm=True)
+    assert inverter.serial_number == HYBRID_SERIAL
+    assert inverter.model == "HYDxxKTL-3P"
+    assert inverter.inverter_type == HYBRID | X3 | GEN | BAT_BTS | PM
+    assert inverter.has_battery_tower is True
+    assert inverter.identity.serial_number == HYBRID_SERIAL
+    assert [e.address for e in mock_modbus_unit.read_events] == [0x042C, 0x0445]
+
+
+def test_a_given_type_still_takes_its_model_from_the_serial(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    inverter = SofarInverter(
+        mock_modbus_unit, serial_number=HYBRID_SERIAL, inverter_type=PV | X1
+    )
+    assert inverter.inverter_type == PV | X1
+    assert inverter.model == "HYDxxKTL-3P"
+
+
+def test_a_given_model_wins_over_the_serial(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    inverter = SofarInverter(
+        mock_modbus_unit, serial_number=HYBRID_SERIAL, model="HYD10KTL-3PH"
+    )
+    assert inverter.inverter_type == HYBRID | X3 | GEN | BAT_BTS
+    assert inverter.model == "HYD10KTL-3PH"
+
+
+def test_an_unknown_serial_has_no_type_and_no_model(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    inverter = SofarInverter(mock_modbus_unit, serial_number="NOPE000000001")
+    assert inverter.inverter_type == InverterType(0)
+    assert inverter.model is None
+
+
+async def test_setup_settles_eps_on_top_of_the_serial(
     hybrid: SofarInverter,
 ) -> None:
     await hybrid.async_update()
-    assert hybrid.serial_number == HYBRID_SERIAL
-    assert hybrid.model == "HYDxxKTL-3P"
     assert hybrid.inverter_type == HYBRID | X3 | GEN | BAT_BTS | EPS | PM
-    assert hybrid.has_battery_tower is True
 
 
 async def test_component_names_are_empty_until_setup(
@@ -102,7 +140,7 @@ async def test_readings_and_settings_polls_are_disjoint(
     assert not (set(settings.failed) & readings.updated)
 
 
-async def test_constructor_identity_skips_serial_number_read(
+async def test_setup_never_reads_the_serial_number(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
     """Identity given to the constructor still gets probed for EPS."""
@@ -176,7 +214,7 @@ async def test_rated_power_zero_is_unavailable(
 
 
 async def test_identity_and_clock(hybrid: SofarInverter) -> None:
-    await hybrid.async_update()
+    await hybrid.identity.async_update()
     assert hybrid.identity.serial_number == HYBRID_SERIAL
     assert hybrid.identity.hardware_version == "V1"
     assert hybrid.identity.software_version == "V210"
@@ -212,11 +250,11 @@ async def test_the_eps_probe_detects_presence(
 ) -> None:
     """A hybrid inverter that answers the off-grid block gets EPS set."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
-    inverter = SofarInverter(mock_modbus_unit)
+    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
     report = await inverter.async_update()
     assert inverter.offgrid.offgrid_frequency == pytest.approx(49.98)
     assert "offgrid" in report.updated
-    assert EPS in (inverter.inverter_type or InverterType(0))
+    assert EPS in inverter.inverter_type
 
 
 @pytest.mark.parametrize("error", [IllegalDataAddressError(), IllegalFunctionError()])
@@ -226,11 +264,11 @@ async def test_the_eps_probe_detects_absence(
     """Either exception code means the off-grid block does not exist."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     mock_modbus_unit.fail_read(0x0504, error)
-    inverter = SofarInverter(mock_modbus_unit)
+    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
     report = await inverter.async_update()
     assert inverter.offgrid.offgrid_frequency is None
     assert "offgrid" not in report.updated
-    assert EPS not in (inverter.inverter_type or InverterType(0))
+    assert EPS not in inverter.inverter_type
 
 
 async def test_the_eps_probe_is_skipped_for_a_pv_only_inverter(
@@ -238,7 +276,9 @@ async def test_the_eps_probe_is_skipped_for_a_pv_only_inverter(
 ) -> None:
     """A PV-only inverter can never have EPS, so it is never probed."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
-    inverter = SofarInverter(mock_modbus_unit, inverter_type=PV | X1)
+    inverter = SofarInverter(
+        mock_modbus_unit, serial_number=HYBRID_SERIAL, inverter_type=PV | X1
+    )
     await inverter.async_update()
     assert not any(e.address == 0x0504 for e in mock_modbus_unit.read_events)
 
@@ -249,7 +289,7 @@ async def test_a_probe_failure_other_than_absence_propagates(
     """A real device error is not mistaken for "no EPS" and swallowed."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     mock_modbus_unit.fail_read(0x0504, ServerDeviceFailureError())
-    inverter = SofarInverter(mock_modbus_unit)
+    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
     with pytest.raises(ServerDeviceFailureError):
         await inverter.async_update()
     assert inverter.readings_components == ()
@@ -288,9 +328,8 @@ async def test_extra_mppt_strings_appear_on_a_ten_mppt_inverter(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     mock_modbus_unit.holding.update(MODERN_HOLDING)
-    mock_modbus_unit.holding[0x0445] = ascii_words("SQ1ES1000001", 7)
     mock_modbus_unit.holding[0x059F] = 3600  # PV voltage 10 -> 360.0 V
-    inverter = SofarInverter(mock_modbus_unit)
+    inverter = SofarInverter(mock_modbus_unit, serial_number="SQ1ES1000001")
     report = await inverter.async_update()
     assert inverter.model == "100kW KTLX-G4"
     for name in ("pv_3", "pv_4", "pv_5_6", "pv_7_8", "pv_9_10"):
@@ -516,7 +555,7 @@ async def test_the_battery_tower_is_never_part_of_a_poll(
     assert not any(b.address >= 0x9000 for b in mock_modbus_unit.read_events)
 
 
-# --- what setup and the tower log ------------------------------------
+# --- what detection, setup and the tower log -------------------------
 
 
 def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -525,11 +564,13 @@ def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
     ]
 
 
-async def test_setup_logs_what_it_detected(
-    hybrid: SofarInverter, caplog: pytest.LogCaptureFixture
+async def test_detection_and_setup_log_what_they_found(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
-    await hybrid.async_update()
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    inverter = await SofarInverter.async_detect(mock_modbus_unit, read_pm=True)
+    await inverter.async_update()
 
     assert _logged(caplog) == [
         "Serial SP1ES12345678 identifies as GEN|X3|HYBRID|BAT_BTS, model HYDxxKTL-3P",
@@ -552,7 +593,8 @@ async def test_an_unknown_serial_is_logged(
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     mock_modbus_unit.holding[0x0445] = ascii_words("NOPE000000001", 7)
-    await SofarInverter(mock_modbus_unit).async_update()
+    inverter = await SofarInverter.async_detect(mock_modbus_unit)
+    await inverter.async_update()
 
     assert _logged(caplog)[0] == "Serial NOPE000000001 matches no known model"
 
@@ -563,7 +605,8 @@ async def test_a_refused_off_grid_block_is_logged(
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     mock_modbus_unit.fail_read(0x0504, IllegalDataAddressError())
-    await SofarInverter(mock_modbus_unit).async_update()
+    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
+    await inverter.async_update()
 
     assert _logged(caplog)[1].startswith(
         "Inverter SP1ES12345678 refuses the off-grid block: "
