@@ -118,12 +118,13 @@ async def test_the_tower_blocks_are_read_for_a_battery_tower(
     assert sorted(await hybrid.async_read_masks()) == MODELED_BLOCKS + TOWER_BLOCKS
 
 
-async def test_reading_masks_sets_the_inverter_up_first(
-    pv_inverter: SofarInverter,
+async def test_reading_masks_needs_no_setup(
+    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    """Whether a tower exists is only known once setup has run."""
+    """The serial settles the tower, so no EPS probe precedes a download."""
     await pv_inverter.async_read_masks()
-    assert pv_inverter.serial_number == "SP1ES12345678"
+    assert pv_inverter.readings_components == ()
+    assert all(event.address & 0x3F == 0 for event in mock_modbus_unit.read_events)
 
 
 async def test_a_denied_meter_block_is_not_polled(

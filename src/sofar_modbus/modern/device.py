@@ -351,7 +351,6 @@ class SofarInverter(Device):
 
         Blocks answering none are left out; the tower's cost a timeout.
         """
-        await self.async_ensure_setup()
         bases = MASK_BLOCKS
         if self.has_battery_tower:
             bases += TOWER_MASK_BLOCKS
