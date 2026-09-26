@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import re
+from collections.abc import Callable
+
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
@@ -529,3 +533,153 @@ async def test_a_raised_poll_is_not_a_quiet_one(
     assert widened == SPACING_STEPS[0]
     assert tuner.tuning.spacing == widened
     assert mock_modbus_unit.message_spacing == widened
+
+
+# --- what the tuner logs ---------------------------------------------
+
+
+def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == "sofar_modbus.tuning"]
+
+
+async def test_an_ask_and_its_withdrawal_are_logged_with_their_reason(
+    tuned: tuple[SofarInverter, LinkTuner], caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    inverter, tuner = tuned
+    for _ in range(CLEAN_POLLS):
+        await _poll(inverter, tuner)
+    tuner.observe(_timed_out())
+
+    asked, withdrawn = _logged(caplog)
+    assert re.fullmatch(
+        r"Asking for a 0\.5 s timeout: the slowest of \d+ answers took \d\.\d{3} s",
+        asked,
+    )
+    assert withdrawn == (
+        "Withdrawing the 0.5 s timeout after a request timed out; "
+        "asking again takes 10 clean polls"
+    )
+
+
+async def test_a_timeout_nothing_was_asked_for_logs_nothing(
+    tuned: tuple[SofarInverter, LinkTuner], caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    _, tuner = tuned
+    tuner.observe(_timed_out())
+
+    assert _logged(caplog) == []
+
+
+@pytest.mark.parametrize(
+    ("crowding", "polls", "reason"),
+    [
+        (_desynced, 1, "a reply desynced"),
+        (_busy, CROWDED_POLLS, "the line is crowded"),
+    ],
+)
+async def test_widening_logs_what_crowded_the_line(
+    tuned: tuple[SofarInverter, LinkTuner],
+    caplog: pytest.LogCaptureFixture,
+    crowding: Callable[[], UpdateReport],
+    polls: int,
+    reason: str,
+) -> None:
+    inverter, tuner = tuned
+    await _poll(inverter, tuner)
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    for _ in range(polls):
+        tuner.observe(crowding())
+
+    assert _logged(caplog) == [f"Widening the frame gap to 0.02 s: {reason}"]
+
+
+async def test_narrowing_is_logged(
+    tuned: tuple[SofarInverter, LinkTuner], caplog: pytest.LogCaptureFixture
+) -> None:
+    inverter, tuner = tuned
+    await _poll(inverter, tuner)
+    tuner.observe(_desynced())
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    for _ in range(QUIET_POLLS * 2):
+        await _poll(inverter, tuner)
+
+    narrowed = [m for m in _logged(caplog) if m.startswith("Narrowing")]
+    assert narrowed == ["Narrowing the frame gap to 0.0 s after 40 quiet polls"]
+
+
+async def test_a_gap_the_budget_caps_is_logged(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A line that stays crowded at the cap is worth seeing in a log."""
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    timed = TimedUnit(mock_modbus_unit)
+    inverter = SofarInverter(timed, read_pm=True)
+    tuner = LinkTuner(timed, budget=1.0)
+    await _poll(inverter, tuner)
+    tuner.observe(_desynced())
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    tuner.observe(_desynced())
+
+    (capped,) = _logged(caplog)
+    assert re.fullmatch(
+        r"Not widening the 0\.02 s frame gap \(a reply desynced\): "
+        r"the budget caps it at 0\.02\d s",
+        capped,
+    )
+
+
+async def _fail_opens(
+    inverter: SofarInverter, tuner: LinkTuner, unit: MockModbusUnit
+) -> None:
+    """Enough unanswered opens to move the connect delay one step."""
+    unit.fail_read(0x0404, ModbusTimeoutError("not ready yet"))
+    for _ in range(FAILED_OPENS):
+        with pytest.raises(ModbusTimeoutError):
+            await inverter.state.async_update()
+        await unit.disconnect()
+    tuner.observe(UpdateReport({"grid"}, {}))
+
+
+async def test_a_connect_delay_is_logged(
+    tuned: tuple[SofarInverter, LinkTuner],
+    mock_modbus_unit: MockModbusUnit,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    inverter, tuner = tuned
+    await _fail_opens(inverter, tuner, mock_modbus_unit)
+
+    assert _logged(caplog) == [
+        "Pausing 0.25 s after the link opens: 2 opening requests went unanswered"
+    ]
+
+
+async def test_the_longest_connect_delay_is_logged_as_kept(
+    tuned: tuple[SofarInverter, LinkTuner],
+    mock_modbus_unit: MockModbusUnit,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    inverter, tuner = tuned
+    tuner.restore(LinkTuning(connect_delay=CONNECT_DELAYS[-1]))
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    await _fail_opens(inverter, tuner, mock_modbus_unit)
+
+    assert _logged(caplog) == [
+        "Not lengthening the 2.0 s connect delay (2 unanswered opens): "
+        "it is the longest"
+    ]
+
+
+def test_a_restore_is_logged(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    settled = LinkTuning(timeout=1.4, spacing=0.05, connect_delay=0.5, withdrawals=2)
+    LinkTuner(TimedUnit(mock_modbus_unit)).restore(settled)
+
+    assert _logged(caplog) == [
+        "Restoring LinkTuning(timeout=1.4, spacing=0.05, connect_delay=0.5, "
+        "withdrawals=2)"
+    ]

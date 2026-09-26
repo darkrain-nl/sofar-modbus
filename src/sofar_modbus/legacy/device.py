@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
@@ -17,6 +18,8 @@ from .storage import AcBatterySettings, Storage, StorageEps, StorageThreePhase
 
 if TYPE_CHECKING:
     from modbus_connection import ModbusUnit
+
+_LOGGER = logging.getLogger(__name__)
 
 # Runs several components tile; reading a member apart wastes a request
 # and isolates nothing. ``storage`` spans 0x0200-0x0245 (all S/T phase
@@ -111,6 +114,14 @@ class SofarLegacyInverter(Device):
             self.serial_number = re.sub(r"[^A-Za-z0-9 -]", "", raw)
         if self.inverter_type is None:
             self.inverter_type = identify(self.serial_number)
+            if self.inverter_type:
+                _LOGGER.debug(
+                    "Serial %s identifies as %s",
+                    self.serial_number,
+                    self.inverter_type.name,
+                )
+            else:
+                _LOGGER.debug("Serial %s matches no known model", self.serial_number)
         inverter_type = self.inverter_type
         assert inverter_type is not None
         if (
@@ -136,13 +147,23 @@ class SofarLegacyInverter(Device):
             if matches(inverter_type, getattr(self, name).applies_to)
         ]
         self._polled = self._pool(served)
+        _LOGGER.debug(
+            "Inverter %s is %s; polling: %s",
+            self.serial_number,
+            inverter_type.name or "an unknown type",
+            ", ".join(self._polled) or "nothing",
+        )
 
     async def _async_probe_eps(self) -> bool:
         """Whether this inverter answers the EPS registers."""
         try:
             await self.storage_eps.async_update(notify=False)
-        except (IllegalDataAddressError, IllegalFunctionError):
+        except (IllegalDataAddressError, IllegalFunctionError) as err:
+            _LOGGER.debug(
+                "Inverter %s refuses the EPS registers: %s", self.serial_number, err
+            )
             return False
+        _LOGGER.debug("Inverter %s answers the EPS registers", self.serial_number)
         return True
 
     def _pool(self, served: list[str]) -> list[str]:

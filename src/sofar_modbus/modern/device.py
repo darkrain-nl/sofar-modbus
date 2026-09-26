@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from modbus_connection import IllegalDataAddressError, IllegalFunctionError
+from modbus_connection import (
+    IllegalDataAddressError,
+    IllegalFunctionError,
+    ModbusConnectionError,
+    ModbusError,
+)
 from modbus_connection.model import Device, Raw
 
 from ..model import UpdateReport
@@ -60,6 +66,8 @@ from .settings import (
 
 if TYPE_CHECKING:
     from modbus_connection import ModbusUnit
+
+_LOGGER = logging.getLogger(__name__)
 
 _SET_TIME_REGISTER = 0x1004
 _IV_CURVE_SCAN_REGISTER = 0x1027
@@ -165,6 +173,7 @@ class SofarInverter(Device):
 
         self._readings: list[str] = []
         self._settings: list[str] = []
+        self._packs_answering: dict[tuple[int, int], bool] = {}
 
     @property
     def has_battery_tower(self) -> bool:
@@ -190,6 +199,15 @@ class SofarInverter(Device):
             assert self.serial_number is not None
         if self.inverter_type is None:
             detected, model = identify(self.serial_number)
+            if detected:
+                _LOGGER.debug(
+                    "Serial %s identifies as %s, model %s",
+                    self.serial_number,
+                    detected.name,
+                    model,
+                )
+            else:
+                _LOGGER.debug("Serial %s matches no known model", self.serial_number)
             self.inverter_type = detected | self._options
             if self.model is None:
                 self.model = model
@@ -247,6 +265,14 @@ class SofarInverter(Device):
             )
             if matches(inverter_type, getattr(self, name).applies_to)
         ]
+        _LOGGER.debug(
+            "Inverter %s is %s, model %s; readings: %s; settings: %s",
+            self.serial_number,
+            inverter_type.name or "an unknown type",
+            self.model,
+            ", ".join(self._readings) or "nothing",
+            ", ".join(self._settings) or "nothing",
+        )
 
     async def _async_drop_denied_components(self) -> None:
         """Stop polling components the model says it does not serve.
@@ -256,15 +282,33 @@ class SofarInverter(Device):
         for name, address in GATED_COMPONENTS.items():
             if name not in self._readings:
                 continue
-            if await async_serves(self.modbus_unit, address) is False:
+            served = await async_serves(self.modbus_unit, address)
+            if served is None:
+                _LOGGER.debug(
+                    "Inverter %s publishes no usable mask for 0x%04X, keeping %s",
+                    self.serial_number,
+                    address,
+                    name,
+                )
+            elif not served:
+                _LOGGER.debug(
+                    "Inverter %s denies 0x%04X in its mask, dropping %s",
+                    self.serial_number,
+                    address,
+                    name,
+                )
                 self._readings.remove(name)
 
     async def _async_probe_eps(self) -> bool:
         """Whether this inverter answers the off-grid (EPS) block."""
         try:
             await self.offgrid.async_update(notify=False)
-        except (IllegalDataAddressError, IllegalFunctionError):
+        except (IllegalDataAddressError, IllegalFunctionError) as err:
+            _LOGGER.debug(
+                "Inverter %s refuses the off-grid block: %s", self.serial_number, err
+            )
             return False
+        _LOGGER.debug("Inverter %s answers the off-grid block", self.serial_number)
         return True
 
     async def async_update_readings(self) -> UpdateReport:
@@ -318,9 +362,47 @@ class SofarInverter(Device):
 
         Check ``pack_id``: a not-yet-switched tower still answers.
         """
-        await self.battery_pack.async_select(pack_nr, group_nr)
-        await self.battery_pack.async_update()
+        try:
+            await self.battery_pack.async_select(pack_nr, group_nr)
+            await self.battery_pack.async_update()
+        except ModbusConnectionError:
+            raise  # a dead link says nothing about the pack
+        except ModbusError as err:
+            self._note_pack(pack_nr, group_nr, repr(err))
+            raise
+        served = self.battery_pack.pack_id
+        assert served is not None  # pack_id declares no nan
+        if served & 0x0FFF == group_nr << 8 | pack_nr:
+            self._note_pack(pack_nr, group_nr, None)
+        else:
+            self._note_pack(
+                pack_nr,
+                group_nr,
+                f"the tower serves pack {served & 0xFF} of group {served >> 8 & 0xF}",
+            )
         return self.battery_pack
+
+    def _note_pack(self, pack_nr: int, group_nr: int, silence: str | None) -> None:
+        """Log a pack starting or stopping to answer."""
+        answers = silence is None
+        if self._packs_answering.get((group_nr, pack_nr)) == answers:
+            return
+        self._packs_answering[group_nr, pack_nr] = answers
+        if answers:
+            _LOGGER.debug(
+                "Inverter %s: battery pack %d of group %d answers",
+                self.serial_number,
+                pack_nr,
+                group_nr,
+            )
+        else:
+            _LOGGER.debug(
+                "Inverter %s: battery pack %d of group %d does not answer: %s",
+                self.serial_number,
+                pack_nr,
+                group_nr,
+                silence,
+            )
 
     async def async_set_time(self, when: datetime | None = None) -> None:
         """Write the inverter's clock.
