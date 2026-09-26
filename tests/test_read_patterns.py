@@ -21,7 +21,7 @@ from sofar_modbus.modern import (
 )
 from sofar_modbus.variants import AC, X1, matches
 
-from .conftest import LEGACY_HOLDING, MODERN_HOLDING, ascii_words
+from .conftest import LEGACY_HOLDING, LEGACY_THREE_PHASE_PV_SERIAL, MODERN_HOLDING
 
 MODERN_BLOCK_SIZE = 48
 LEGACY_BLOCK_SIZE = 100
@@ -50,10 +50,8 @@ def legacy_served(
     inverter: SofarLegacyInverter,
 ) -> list[tuple[str, SofarLegacyComponent]]:
     """Every component this inverter polls, named — pools flattened to members."""
-    assert inverter.inverter_type is not None  # settled by the first update
     served = []
     for name in (
-        "identity",
         "pv_common",
         "pv_single_phase",
         "pv_three_phase",
@@ -71,7 +69,7 @@ def legacy_served(
 
 
 async def poll(inverter: SofarInverter, unit: MockModbusUnit) -> list[ReadEvent]:
-    """Run a second update, so setup's one-off serial read is excluded."""
+    """Run a second update, so setup's one-off reads are excluded."""
     await inverter.async_update()
     unit.read_events.clear()
     await inverter.async_update()
@@ -168,8 +166,7 @@ async def test_a_pv_only_inverter_never_touches_the_battery_registers(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     mock_modbus_unit.holding.update(MODERN_HOLDING)
-    mock_modbus_unit.holding[0x0445] = ascii_words("SH3E000001", 7)  # PV | X1 | GEN
-    inverter = SofarInverter(mock_modbus_unit)
+    inverter = SofarInverter(mock_modbus_unit, serial_number="SH3E000001")
     blocks = await poll(inverter, mock_modbus_unit)
     read = covered(blocks)
     assert not read & set(range(0x0604, 0x066A))  # battery strings and totals
@@ -184,14 +181,12 @@ async def test_the_extra_mppt_strings_are_only_read_where_they_exist(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     mock_modbus_unit.holding.update(MODERN_HOLDING)
-    mock_modbus_unit.holding[0x0445] = ascii_words("SQ1ES1000001", 7)  # MPPT10
-    ten = SofarInverter(mock_modbus_unit)
+    ten = SofarInverter(mock_modbus_unit, serial_number="SQ1ES1000001")
     ten_blocks = await poll(ten, mock_modbus_unit)
     assert covered(ten_blocks) >= set(range(0x0584, 0x05A2))
 
     mock_modbus_unit.read_events.clear()
-    mock_modbus_unit.holding[0x0445] = ascii_words("SH3E000001", 7)  # two MPPTs
-    two = SofarInverter(mock_modbus_unit)
+    two = SofarInverter(mock_modbus_unit, serial_number="SH3E000001")
     two_blocks = await poll(two, mock_modbus_unit)
     assert not any(0x058A <= address <= 0x05A1 for address in covered(two_blocks))
 
@@ -220,10 +215,9 @@ async def test_pv_string_6_power_reads_its_own_register(
 ) -> None:
     """Upstream aliases string 6's power onto its current; the spec does not."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
-    mock_modbus_unit.holding[0x0445] = ascii_words("SQ1ES1000001", 7)
     mock_modbus_unit.holding[0x0594] = 250  # PV current 6 -> 2.5 A
     mock_modbus_unit.holding[0x0595] = 810  # PV power 6 -> 8.1 kW
-    inverter = SofarInverter(mock_modbus_unit)
+    inverter = SofarInverter(mock_modbus_unit, serial_number="SQ1ES1000001")
     blocks = await poll(inverter, mock_modbus_unit)
     assert 0x0595 in covered(blocks)
     assert inverter.pv_5_6.pv_current_6 == pytest.approx(2.5)
@@ -274,9 +268,12 @@ async def test_a_legacy_ac_inverter_polls_its_battery_floor(
 ) -> None:
     """An AC-coupled inverter includes the battery floor setting in its poll."""
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
-    mock_modbus_unit.input[0x2002] = ascii_words("SC1E1234567890", 6)
     mock_modbus_unit.input[0x104D] = 20
-    inverter = SofarLegacyInverter(mock_modbus_unit, inverter_type=AC | X1)
+    inverter = SofarLegacyInverter(
+        mock_modbus_unit,
+        serial_number=LEGACY_THREE_PHASE_PV_SERIAL,
+        inverter_type=AC | X1,
+    )
 
     report = await inverter.async_update()
 
@@ -302,7 +299,7 @@ async def test_raw_dump_covers_every_polled_component(hybrid: SofarInverter) -> 
     report = await hybrid.async_update()
 
     dumped = set((await hybrid.async_read_raw())["holding"])
-    assert 0x0445 in dumped  # the serial number setup reads
+    assert 0x0445 in dumped  # the serial number no poll reads
     for name in report.updated:
         component = getattr(hybrid, name)
         missing = field_addresses(component) - dumped
@@ -318,7 +315,7 @@ async def test_legacy_raw_dump_covers_every_polled_component(
     await legacy_hybrid.async_update()
 
     raw = await legacy_hybrid.async_read_raw()
-    assert 0x2002 in raw["input"]  # the serial number setup reads
+    assert 0x2002 in raw["input"]  # the serial number no poll reads
     for name, component in legacy_served(legacy_hybrid):
         missing = field_addresses(component) - set(raw[component.register_space])
         assert not missing, f"{name} missed {sorted(missing)}"

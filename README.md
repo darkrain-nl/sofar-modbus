@@ -27,10 +27,12 @@ and the `SE1E` / `SM1E` / `ZE1E` / `ZM1E` storage inverters, over the 0x0000 and
 
 Within a generation, what an inverter serves depends on its model: single or
 three phase, PV-only or hybrid, how many MPPT trackers, whether off-grid (EPS)
-and parallel-system registers exist. The first update reads the serial number
+and parallel-system registers exist. `async_detect()` reads the serial number
 and settles this into an `InverterType` bitmask; each component declares the
 mask it applies to, and a poll reads only the matching ones. Nothing else is
-touched — an inverter without batteries never sees a battery register.
+touched: an inverter without batteries never sees a battery register. A caller
+that already knows the serial number passes it to the constructor instead,
+which reads nothing.
 
 ## Usage
 
@@ -47,7 +49,7 @@ async def main() -> None:
         ModbusSerialParams(device="socket://192.168.1.50:8899")
     )
     try:
-        inverter = SofarInverter(connection.for_unit(1))
+        inverter = await SofarInverter.async_detect(connection.for_unit(1))
         await inverter.async_update()
 
         print("Model:", inverter.model, inverter.serial_number)
@@ -252,11 +254,11 @@ Measure before choosing one. `sofar_modbus.tuning.TimedUnit` wraps a
 unit and read its `stats` for the same figures in your own application.
 
 A caller who has measured their link states it with `timeout=` on either
-constructor, which asks for it through `ModbusUnit.require_timeout()`. Two
-things to know before setting one: the connection runs with the largest value
-any of its units asks for, so a device sharing the link can raise it, and a
-lowered value takes effect at the next connect rather than on the link already
-open.
+constructor or on `async_detect()`, which asks for it through
+`ModbusUnit.require_timeout()`. Two things to know before setting one: the
+connection runs with the largest value any of its units asks for, so a device
+sharing the link can raise it, and a lowered value takes effect at the next
+connect rather than on the link already open.
 
 ### Or let the link say it itself
 
@@ -268,7 +270,7 @@ hand it each poll's report:
 from sofar_modbus.tuning import LinkTuner, TimedUnit
 
 timed = TimedUnit(connection.for_unit(1))
-inverter = SofarInverter(timed)
+inverter = await SofarInverter.async_detect(timed)
 tuner = LinkTuner(timed)
 
 while True:

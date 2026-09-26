@@ -12,7 +12,7 @@ from modbus_connection.mock import MockModbusUnit
 
 from sofar_modbus import SofarInverter, SofarLegacyInverter
 
-from .conftest import ascii_words
+from .conftest import HYBRID_SERIAL, MODERN_HOLDING
 
 
 async def test_a_failed_component_leaves_the_rest_fresh(
@@ -86,10 +86,10 @@ async def test_legacy_containment_matches_the_modern_contract(
 
 
 async def test_a_failed_setup_still_raises(mock_modbus_unit: MockModbusUnit) -> None:
-    """Identity is the poll's foundation; without it there is nothing partial."""
-    mock_modbus_unit.holding[0x0445] = ascii_words("SP1ES12345678", 7)
-    mock_modbus_unit.fail_read(0x0445, ModbusTimeoutError("no serial"))
-    inverter = SofarInverter(mock_modbus_unit)
+    """Setup decides what a poll reads; without it nothing is partial."""
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.fail_read(0x06ED, ModbusTimeoutError("no rating"))
+    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
     with pytest.raises(ModbusTimeoutError):
         await inverter.async_update()
 

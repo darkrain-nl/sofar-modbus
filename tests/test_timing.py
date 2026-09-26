@@ -33,7 +33,7 @@ from sofar_modbus.tuning import (
     target_timeout,
 )
 
-from .conftest import MODERN_HOLDING
+from .conftest import HYBRID_SERIAL, MODERN_HOLDING
 
 Inverter = type[SofarInverter] | type[SofarLegacyInverter]
 
@@ -45,7 +45,7 @@ def test_an_inverter_requires_nothing_of_the_link_by_itself(
     inverter_class: Inverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
     """Guessing a timeout for an unmeasured link is what this avoids."""
-    inverter_class(mock_modbus_unit)
+    inverter_class(mock_modbus_unit, serial_number=HYBRID_SERIAL)
     assert mock_modbus_unit.required_timeout is None
 
 
@@ -53,7 +53,17 @@ def test_an_inverter_requires_nothing_of_the_link_by_itself(
 def test_a_caller_that_knows_its_link_states_the_timeout(
     inverter_class: Inverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    inverter_class(mock_modbus_unit, timeout=2.5)
+    inverter_class(mock_modbus_unit, serial_number=HYBRID_SERIAL, timeout=2.5)
+    assert mock_modbus_unit.required_timeout == 2.5
+
+
+@pytest.mark.parametrize("inverter_class", INVERTERS)
+async def test_detection_states_the_timeout_before_it_reads(
+    inverter_class: Inverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    mock_modbus_unit.fail_requests(ModbusTimeoutError("asleep"))
+    with pytest.raises(ModbusTimeoutError):
+        await inverter_class.async_detect(mock_modbus_unit, timeout=2.5)
     assert mock_modbus_unit.required_timeout == 2.5
 
 
@@ -118,7 +128,7 @@ async def test_an_inverter_polls_through_the_wrapper(
 ) -> None:
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     timed = TimedUnit(mock_modbus_unit)
-    inverter = SofarInverter(timed, read_pm=True)
+    inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     report = await inverter.async_update()
 
     assert report.complete
@@ -152,7 +162,9 @@ def tuned(mock_modbus_unit: MockModbusUnit) -> tuple[SofarInverter, LinkTuner]:
     """An inverter polling through a timed unit, with a tuner watching."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     timed = TimedUnit(mock_modbus_unit)
-    return SofarInverter(timed, read_pm=True), LinkTuner(timed)
+    return SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True), LinkTuner(
+        timed
+    )
 
 
 def test_a_target_leaves_room_over_the_slowest_answer() -> None:
@@ -304,7 +316,7 @@ async def test_the_budget_caps_how_wide_a_poll_may_get(
     """Thirty reads at fifty milliseconds would cost more than the budget."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     timed = TimedUnit(mock_modbus_unit)
-    inverter = SofarInverter(timed, read_pm=True)
+    inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=1.0)
     await _poll(inverter, tuner)
 
@@ -323,7 +335,7 @@ async def test_a_wider_budget_lets_the_ladder_climb(
     """The same three desyncs, with room to answer them."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     timed = TimedUnit(mock_modbus_unit)
-    inverter = SofarInverter(timed, read_pm=True)
+    inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=10.0)
     await _poll(inverter, tuner)
 
@@ -442,7 +454,7 @@ async def test_a_restored_run_keeps_the_patience_it_paid_for(
     """Or every restart asks a marginal link the same question again."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     timed = TimedUnit(mock_modbus_unit)
-    inverter = SofarInverter(timed, read_pm=True)
+    inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed)
     tuner.restore(LinkTuning(withdrawals=2))
 
@@ -615,7 +627,7 @@ async def test_a_gap_the_budget_caps_is_logged(
     """A line that stays crowded at the cap is worth seeing in a log."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     timed = TimedUnit(mock_modbus_unit)
-    inverter = SofarInverter(timed, read_pm=True)
+    inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=1.0)
     await _poll(inverter, tuner)
     tuner.observe(_desynced())

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from modbus_connection import IllegalDataAddressError, IllegalFunctionError
 from modbus_connection.model import ComponentGroup, Device, Raw
@@ -71,12 +71,20 @@ class SofarLegacyInverter(Device):
         self,
         unit: ModbusUnit,
         *,
-        serial_number: str | None = None,
+        serial_number: str,
         inverter_type: InverterType | None = None,
         timeout: float | None = None,
     ) -> None:
         super().__init__(unit)
         unit.require_timeout(timeout)
+        if inverter_type is None:
+            inverter_type = identify(serial_number)
+            if inverter_type:
+                _LOGGER.debug(
+                    "Serial %s identifies as %s", serial_number, inverter_type.name
+                )
+            else:
+                _LOGGER.debug("Serial %s matches no known model", serial_number)
         self.serial_number = serial_number
         self.inverter_type = inverter_type
 
@@ -97,6 +105,22 @@ class SofarLegacyInverter(Device):
 
         self._polled: list[str] = []
 
+    @classmethod
+    async def async_detect(
+        cls, unit: ModbusUnit, *, timeout: float | None = None
+    ) -> Self:
+        """Build an inverter for a caller that does not know its serial."""
+        unit.require_timeout(timeout)
+        identity = LegacyIdentity(unit)
+        await identity.async_update(notify=False)
+        raw = identity.serial_number
+        assert raw is not None
+        # The plugin strips the punctuation these boards pad the field with.
+        serial_number = re.sub(r"[^A-Za-z0-9 -]", "", raw)
+        device = cls(unit, serial_number=serial_number, timeout=timeout)
+        device.identity = identity
+        return device
+
     @property
     def pv_power_total(self) -> float | None:
         """Total PV power of a hybrid inverter, summed over its two strings."""
@@ -105,32 +129,13 @@ class SofarLegacyInverter(Device):
         return sum(present) if present else None
 
     async def _async_setup(self) -> None:
-        """Read the serial number, settle the model, and pick what to poll."""
-        if self.serial_number is None:
-            await self.identity.async_update(notify=False)
-            raw = self.identity.serial_number
-            assert raw is not None
-            # The plugin strips the punctuation these boards pad the field with.
-            self.serial_number = re.sub(r"[^A-Za-z0-9 -]", "", raw)
-        if self.inverter_type is None:
-            self.inverter_type = identify(self.serial_number)
-            if self.inverter_type:
-                _LOGGER.debug(
-                    "Serial %s identifies as %s",
-                    self.serial_number,
-                    self.inverter_type.name,
-                )
-            else:
-                _LOGGER.debug("Serial %s matches no known model", self.serial_number)
-        inverter_type = self.inverter_type
-        assert inverter_type is not None
+        """Settle which optional sub-systems this inverter serves."""
         if (
-            EPS not in inverter_type
-            and matches(inverter_type, self.storage_eps.applies_to & ~EPS)
+            EPS not in self.inverter_type
+            and matches(self.inverter_type, self.storage_eps.applies_to & ~EPS)
             and await self._async_probe_eps()
         ):
-            inverter_type |= EPS
-            self.inverter_type = inverter_type
+            self.inverter_type |= EPS
         served = [
             name
             for name in (
@@ -144,13 +149,13 @@ class SofarLegacyInverter(Device):
                 "hybrid_pv_2",
                 "battery_settings",
             )
-            if matches(inverter_type, getattr(self, name).applies_to)
+            if matches(self.inverter_type, getattr(self, name).applies_to)
         ]
         self._polled = self._pool(served)
         _LOGGER.debug(
             "Inverter %s is %s; polling: %s",
             self.serial_number,
-            inverter_type.name or "an unknown type",
+            self.inverter_type.name or "an unknown type",
             ", ".join(self._polled) or "nothing",
         )
 
