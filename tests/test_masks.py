@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
@@ -132,6 +134,20 @@ async def test_a_denied_meter_block_is_not_polled(
     assert "meter_energy" not in pv_inverter.readings_components
     assert "energy" in pv_inverter.readings_components
     assert pv_inverter.meter_energy.load_consumption_total is None
+
+
+async def test_a_denied_meter_block_is_logged(
+    pv_inverter: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    mock_modbus_unit.holding[0x0680] = UNMETERED_ENERGY_MASK
+    await pv_inverter.async_update()
+    assert (
+        "Inverter SP1ES12345678 denies 0x0688 in its mask, dropping meter_energy"
+        in caplog.messages
+    )
 
 
 async def test_a_served_meter_block_is_polled(

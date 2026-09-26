@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
     IllegalFunctionError,
+    ModbusConnectionError,
+    ModbusTimeoutError,
     ServerDeviceFailureError,
 )
 from modbus_connection.mock import MockModbusUnit, WriteEvent
@@ -511,3 +514,111 @@ async def test_the_battery_tower_is_never_part_of_a_poll(
     report = await hybrid.async_update()
     assert "battery_pack" not in report.updated
     assert not any(b.address >= 0x9000 for b in mock_modbus_unit.read_events)
+
+
+# --- what setup and the tower log ------------------------------------
+
+
+def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage() for r in caplog.records if r.name == "sofar_modbus.modern.device"
+    ]
+
+
+async def test_setup_logs_what_it_detected(
+    hybrid: SofarInverter, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    await hybrid.async_update()
+
+    assert _logged(caplog) == [
+        "Serial SP1ES12345678 identifies as GEN|X3|HYBRID|BAT_BTS, model HYDxxKTL-3P",
+        "Inverter SP1ES12345678 answers the off-grid block",
+        "Inverter SP1ES12345678 publishes no usable mask for 0x0688, "
+        "keeping meter_energy",
+        "Inverter SP1ES12345678 is GEN|X3|HYBRID|EPS|PM|BAT_BTS, model HYDxxKTL-3P; "
+        "readings: state, grid, offgrid, offgrid_three_phase, pv_1_2, "
+        "battery_1_2, battery_3_8, battery_totals, energy, meter_energy, "
+        "battery_energy; "
+        "settings: rtc_sync, feed_in, eps, battery_active_control, parallel, "
+        "battery_config_id, battery_config, remote, active_power_control, "
+        "charger, passive",
+    ]
+
+
+async def test_an_unknown_serial_is_logged(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding[0x0445] = ascii_words("NOPE000000001", 7)
+    await SofarInverter(mock_modbus_unit).async_update()
+
+    assert _logged(caplog)[0] == "Serial NOPE000000001 matches no known model"
+
+
+async def test_a_refused_off_grid_block_is_logged(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.fail_read(0x0504, IllegalDataAddressError())
+    await SofarInverter(mock_modbus_unit).async_update()
+
+    assert _logged(caplog)[1].startswith(
+        "Inverter SP1ES12345678 refuses the off-grid block: "
+    )
+
+
+async def test_a_pack_starting_and_stopping_to_answer_is_logged(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only a change is news; a pack that keeps answering logs once."""
+    await hybrid.async_update()
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    await hybrid.async_read_pack(pack_nr=0)
+    await hybrid.async_read_pack(pack_nr=0)
+    mock_modbus_unit.fail_read(0x9007, ModbusTimeoutError("no answer"))
+    for _ in range(2):
+        with pytest.raises(ModbusTimeoutError):
+            await hybrid.async_read_pack(pack_nr=0)
+    mock_modbus_unit.fail_read(0x9007, None)
+    await hybrid.async_read_pack(pack_nr=0)
+
+    assert _logged(caplog) == [
+        "Inverter SP1ES12345678: battery pack 0 of group 0 answers",
+        "Inverter SP1ES12345678: battery pack 0 of group 0 does not answer: "
+        "ModbusTimeoutError('no answer')",
+        "Inverter SP1ES12345678: battery pack 0 of group 0 answers",
+    ]
+
+
+async def test_a_pack_the_tower_did_not_switch_to_is_logged_as_silent(
+    hybrid: SofarInverter, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The block still answers, but with another pack's values."""
+    await hybrid.async_update()
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    await hybrid.async_read_pack(pack_nr=1, group_nr=2)
+
+    assert _logged(caplog) == [
+        "Inverter SP1ES12345678: battery pack 1 of group 2 does not answer: "
+        "the tower serves pack 0 of group 0"
+    ]
+
+
+async def test_a_dead_link_says_nothing_about_a_pack(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await hybrid.async_update()
+    await hybrid.async_read_pack(pack_nr=0)
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    mock_modbus_unit.fail_requests(ModbusConnectionError("link down"))
+    with pytest.raises(ModbusConnectionError):
+        await hybrid.async_read_pack(pack_nr=0)
+
+    assert _logged(caplog) == []

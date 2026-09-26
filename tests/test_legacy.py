@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
@@ -224,3 +226,53 @@ async def test_constructor_identity_skips_serial_number_read(
     assert [e.address for e in mock_modbus_unit.read_events] == [0x0216]
     assert device.serial_number == LEGACY_HYBRID_SERIAL
     assert device.inverter_type == legacy_hybrid.inverter_type
+
+
+# --- what setup logs -------------------------------------------------
+
+
+def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage() for r in caplog.records if r.name == "sofar_modbus.legacy.device"
+    ]
+
+
+async def test_setup_logs_what_it_detected(
+    legacy_hybrid: SofarLegacyInverter, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    await legacy_hybrid.async_update()
+
+    assert _logged(caplog) == [
+        "Serial SM1E12345678 identifies as X1|HYBRID",
+        "Inverter SM1E12345678 answers the EPS registers",
+        "Inverter SM1E12345678 is X1|HYBRID|EPS; "
+        "polling: storage_block, hybrid_pv_1, hybrid_pv_2",
+    ]
+
+
+async def test_an_unknown_serial_is_logged(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    mock_modbus_unit.input[0x2002] = ascii_words("WHAT00000000", 6)
+    await SofarLegacyInverter(mock_modbus_unit).async_update()
+
+    assert _logged(caplog) == [
+        "Serial WHAT00000000 matches no known model",
+        "Inverter WHAT00000000 is an unknown type; polling: nothing",
+    ]
+
+
+async def test_refused_eps_registers_are_logged(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    mock_modbus_unit.holding.update(LEGACY_HOLDING)
+    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
+    mock_modbus_unit.fail_read(0x0216, IllegalDataAddressError())
+    await SofarLegacyInverter(mock_modbus_unit).async_update()
+
+    assert _logged(caplog)[1].startswith(
+        "Inverter SM1E12345678 refuses the EPS registers: "
+    )

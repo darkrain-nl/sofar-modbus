@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -19,6 +20,8 @@ from modbus_connection import (
 if TYPE_CHECKING:
     from modbus_connection import ModbusUnit
     from modbus_connection.model import UpdateReport
+
+_LOGGER = logging.getLogger(__name__)
 
 WINDOW = 200
 """Requests kept for the statistics, roughly twenty polls of an inverter."""
@@ -330,13 +333,14 @@ class LinkTuner:
     def _observe_spacing(self, report: UpdateReport) -> None:
         """Widen the gap for a line dropping frames, narrow it for a quiet one."""
         if any(isinstance(err, ModbusDesyncError) for err in report.failed.values()):
-            self._widen()  # a reply to another exchange is never ambiguous
+            # A reply to another exchange is never ambiguous.
+            self._widen("a reply desynced")
             return
         if self._crowding(report):
             self._quiet = 0
             self._crowded += 1
             if self._crowded >= CROWDED_POLLS:
-                self._widen()
+                self._widen("the line is crowded")
             return
         self._crowded = 0
         self._quiet += 1
@@ -354,13 +358,20 @@ class LinkTuner:
             for name, err in report.failed.items()
         )
 
-    def _widen(self) -> None:
+    def _widen(self, why: str) -> None:
         """Take the next gap the budget allows, and grow more patient."""
         self._crowded = self._quiet = 0
         cap = self._budget / self._reads_per_poll
         wider = [gap for gap in SPACING_STEPS if self._spacing < gap <= cap]
         if not wider:
+            _LOGGER.debug(
+                "Not widening the %s s frame gap (%s): the budget caps it at %.3f s",
+                self._spacing,
+                why,
+                cap,
+            )
             return
+        _LOGGER.debug("Widening the frame gap to %s s: %s", wider[0], why)
         self._spacing = wider[0]
         self._unit.set_message_spacing(self._spacing)
         self._required_quiet = min(self._required_quiet * 2, MAX_QUIET_POLLS)
@@ -372,6 +383,11 @@ class LinkTuner:
             return
         narrower = [gap for gap in SPACING_STEPS if gap < self._spacing]
         self._spacing = narrower[-1] if narrower else 0.0
+        _LOGGER.debug(
+            "Narrowing the frame gap to %s s after %d quiet polls",
+            self._spacing,
+            self._required_quiet,
+        )
         self._unit.set_message_spacing(self._spacing)
 
     def _observe_opening(self) -> None:
@@ -389,10 +405,21 @@ class LinkTuner:
         self._bad_opens += failed
         if self._bad_opens < FAILED_OPENS:
             return
-        self._bad_opens = 0
+        bad_opens, self._bad_opens = self._bad_opens, 0
         longer = [pause for pause in CONNECT_DELAYS if pause > self._delay]
         if not longer:
+            _LOGGER.debug(
+                "Not lengthening the %s s connect delay (%d unanswered opens): "
+                "it is the longest",
+                self._delay,
+                bad_opens,
+            )
             return
+        _LOGGER.debug(
+            "Pausing %s s after the link opens: %d opening requests went unanswered",
+            longer[0],
+            bad_opens,
+        )
         self._delay = longer[0]
         self._unit.require_connect_delay(self._delay)
 
@@ -401,6 +428,7 @@ class LinkTuner:
 
         Patience comes back with it, or a restart resets every backoff.
         """
+        _LOGGER.debug("Restoring %s", tuning)
         self._asked = tuning.timeout
         self._spacing = tuning.spacing
         self._delay = tuning.connect_delay
@@ -430,6 +458,12 @@ class LinkTuner:
         if target is None:
             return
         if self._asked is None or target < self._asked * WORTH_ASKING:
+            _LOGGER.debug(
+                "Asking for a %s s timeout: the slowest of %d answers took %.3f s",
+                target,
+                stats.answered,
+                stats.slowest,
+            )
             self._ask(target)
 
     def _ask(self, seconds: float) -> None:
@@ -447,6 +481,12 @@ class LinkTuner:
         if self._asked is None:
             return
         self._unit.require_timeout(None)
-        self._asked = None
         self._withdrawals += 1
         self._required = min(self._required * 2, MAX_CLEAN_POLLS)
+        _LOGGER.debug(
+            "Withdrawing the %s s timeout after a request timed out; "
+            "asking again takes %d clean polls",
+            self._asked,
+            self._required,
+        )
+        self._asked = None

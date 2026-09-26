@@ -326,6 +326,22 @@ The gap is per unit, so it paces this inverter's own frames and no one else's.
 A line shared with another device cannot be quieted from here, only from
 whoever builds the connection.
 
+## Debug logging
+
+The `sofar_modbus` logger says, at `DEBUG`, why a device is polled the way it
+is and what the tuner changed:
+
+- which model a serial identified as, whether the off-grid block answered, which
+  components a mask denied, and the final poll list
+- every timeout the tuner asks for or withdraws, every change to the gap
+  between frames or the pause after connecting, and each step it wanted to take
+  but was already at its limit for
+- a battery pack starting or stopping to answer, including a tower still serving
+  another pack; a pack that keeps answering logs only once
+
+The device lines name the inverter by serial number. The tuner's do not, since
+a tuner only holds the unit it tunes.
+
 ## Attribution
 
 The register maps are derived from
