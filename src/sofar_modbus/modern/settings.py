@@ -191,6 +191,10 @@ class RemoteControl(SofarComponent):
         0x1104, RemoteSwitchOnOff, signed=False, writable=True, force_fc16=True
     )
 
+    async def async_write_switch(self, state: RemoteSwitchOnOff) -> None:
+        """Switch the inverter on or off."""
+        await self.write("remote_switch_on_off", state)
+
 
 class ChargerMode(SofarComponent):
     """The inverter's energy-management mode."""
@@ -200,6 +204,10 @@ class ChargerMode(SofarComponent):
     charger_use_mode = enum(
         0x1110, ChargerUseMode, signed=False, writable=True, force_fc16=True
     )
+
+    async def async_write_mode(self, mode: ChargerUseMode) -> None:
+        """Set the energy-management mode."""
+        await self.write("charger_use_mode", mode)
 
 
 class PassiveMode(SofarComponent):
