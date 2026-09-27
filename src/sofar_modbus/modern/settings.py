@@ -1,8 +1,6 @@
-"""Settings and commands — the 0x1000 register block.
+"""Settings and commands, the 0x1000 register block.
 
-This is the only writable part of the map. Three registers take a plain write
-(``Component.write``); the rest are written as a block of consecutive registers,
-which the device requires and which the ``async_write_*`` methods below issue.
+The device takes paired registers only as one block write.
 """
 
 from __future__ import annotations
@@ -55,8 +53,7 @@ class FeedInLimit(SofarComponent):
     ) -> None:
         """Set the feed-in mode and its power ceiling, in watts.
 
-        The device takes both registers in one write; writing either alone does
-        nothing.
+        The device ignores either register written alone.
         """
         if max_power % 100:
             raise ValueError(f"feed-in power {max_power} is not a multiple of 100 W")
@@ -64,12 +61,9 @@ class FeedInLimit(SofarComponent):
 
 
 class ActivePowerControl(SofarComponent):
-    """Real-time cap on the inverter's own output — register 1105/1106.
+    """Real-time cap on the inverter's own output, registers 1105/1106.
 
-    Distinct from ``FeedInLimit``: that caps power exported to the grid, this
-    caps generation directly, with no dependency on the inverter's own sense
-    of grid flow. The registers are volatile (no flash wear from writing them
-    often) and take effect within seconds.
+    Caps generation, not export; volatile, so safe to write often.
     """
 
     applies_to = PV | HYBRID
@@ -84,11 +78,7 @@ class ActivePowerControl(SofarComponent):
     ) -> None:
         """Cap the inverter's own output at ``limit_pct`` % of rated power.
 
-        Registers 1105 and 1106 go out together, mirroring how the device
-        wants every other paired setting here: 1105 arms the limit, 1106 is
-        the percentage in 0.1% steps. Disabling clears the arm bit but leaves
-        the last-written percentage in place, matching the device's own
-        behaviour of ignoring 1106 while its bit in 1105 is unset.
+        Disabling keeps 1106: the device ignores it while 1105 is unset.
         """
         if not 0 <= limit_pct <= 100:
             raise ValueError(f"active power limit {limit_pct}% is outside 0-100")
@@ -109,8 +99,7 @@ class EpsControl(SofarComponent):
     async def async_write_control(self, mode: EpsControlMode) -> None:
         """Set the EPS mode.
 
-        Two registers go out together; the wait time is a reserved function, so
-        the plugin always writes 0 and so do we.
+        The wait time is reserved, so it goes out as 0.
         """
         await self._unit.write_registers(0x1029, [int(mode), 0])
 
@@ -191,6 +180,10 @@ class RemoteControl(SofarComponent):
         0x1104, RemoteSwitchOnOff, signed=False, writable=True, force_fc16=True
     )
 
+    async def async_write_switch(self, state: RemoteSwitchOnOff) -> None:
+        """Switch the inverter on or off."""
+        await self.write("remote_switch_on_off", state)
+
 
 class ChargerMode(SofarComponent):
     """The inverter's energy-management mode."""
@@ -200,6 +193,10 @@ class ChargerMode(SofarComponent):
     charger_use_mode = enum(
         0x1110, ChargerUseMode, signed=False, writable=True, force_fc16=True
     )
+
+    async def async_write_mode(self, mode: ChargerUseMode) -> None:
+        """Set the energy-management mode."""
+        await self.write("charger_use_mode", mode)
 
 
 class PassiveMode(SofarComponent):
@@ -229,8 +226,7 @@ class PassiveMode(SofarComponent):
     ) -> None:
         """Command the passive-mode setpoints, in watts, in one write.
 
-        All three are signed 32-bit and go out as one six-register block: the
-        desired grid power, then the battery power window.
+        The device takes the three int32 values only as one block.
         """
         words: list[int] = []
         for value in (grid_power, battery_min, battery_max):

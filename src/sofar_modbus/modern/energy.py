@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from modbus_connection.model import uint32
 
-from ..model import TornReadCorrectedComponent
+from ..model import TornReadCorrectedComponent, corrected_total
 from ..variants import HYBRID, PV
 
 
@@ -16,7 +16,8 @@ class EnergyTotals(TornReadCorrectedComponent):
     solar_generation_today = uint32(0x0684, scale=0.01, unit="kWh")
     solar_generation_total = uint32(0x0686, scale=0.1, unit="kWh")
 
-    _total_increasing_fields = ("solar_generation_today", "solar_generation_total")
+    solar_generation_today_corrected = corrected_total(solar_generation_today)
+    solar_generation_total_corrected = corrected_total(solar_generation_total)
 
 
 # Unmetered models deny this block and read back indeterminate values,
@@ -33,14 +34,12 @@ class MeterEnergy(TornReadCorrectedComponent):
     export_energy_today = uint32(0x0690, scale=0.01, unit="kWh")
     export_energy_total = uint32(0x0692, scale=0.1, unit="kWh")
 
-    _total_increasing_fields = (
-        "load_consumption_today",
-        "load_consumption_total",
-        "import_energy_today",
-        "import_energy_total",
-        "export_energy_today",
-        "export_energy_total",
-    )
+    load_consumption_today_corrected = corrected_total(load_consumption_today)
+    load_consumption_total_corrected = corrected_total(load_consumption_total)
+    import_energy_today_corrected = corrected_total(import_energy_today)
+    import_energy_total_corrected = corrected_total(import_energy_total)
+    export_energy_today_corrected = corrected_total(export_energy_today)
+    export_energy_total_corrected = corrected_total(export_energy_total)
 
 
 class BatteryEnergy(TornReadCorrectedComponent):
@@ -53,9 +52,7 @@ class BatteryEnergy(TornReadCorrectedComponent):
     battery_output_energy_today = uint32(0x0698, scale=0.01, unit="kWh")
     battery_output_energy_total = uint32(0x069A, scale=0.1, unit="kWh")
 
-    _total_increasing_fields = (
-        "battery_input_energy_today",
-        "battery_input_energy_total",
-        "battery_output_energy_today",
-        "battery_output_energy_total",
-    )
+    battery_input_energy_today_corrected = corrected_total(battery_input_energy_today)
+    battery_input_energy_total_corrected = corrected_total(battery_input_energy_total)
+    battery_output_energy_today_corrected = corrected_total(battery_output_energy_today)
+    battery_output_energy_total_corrected = corrected_total(battery_output_energy_total)

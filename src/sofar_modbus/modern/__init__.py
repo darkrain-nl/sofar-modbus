@@ -1,8 +1,19 @@
 """Current-generation Sofar register map (upstream ``plugin_sofar.py``)."""
 
-from .battery import BatteryStrings1To2, BatteryStrings3To8, BatteryTotals
+from .battery import (
+    BatteryString,
+    BatteryStringComponent,
+    BatteryStrings1To2,
+    BatteryStrings3To8,
+    BatteryTotals,
+)
 from .battery_pack import BatteryPack
-from .device import SofarInverter, identify
+from .device import (
+    BATTERY_STRING_COMPONENTS,
+    PV_STRING_COMPONENTS,
+    SofarInverter,
+    identify,
+)
 from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
 from .enums import (
     BatConfigCellType,
@@ -47,8 +58,10 @@ from .faults import FAULTS, FAULTS_BY_ID, Fault, FaultCategory
 from .inverter import GridOutput, Identity, InverterState
 from .offgrid import OffGridSinglePhase, OffGridThreePhase, OffGridTotals
 from .pv import (
+    PvString,
     PvString3,
     PvString4,
+    PvStringComponent,
     PvStrings1To2,
     PvStrings5To6,
     PvStrings7To8,
@@ -70,8 +83,10 @@ from .settings import (
 )
 
 __all__ = [
+    "BATTERY_STRING_COMPONENTS",
     "FAULTS",
     "FAULTS_BY_ID",
+    "PV_STRING_COMPONENTS",
     "ActivePowerControl",
     "BatConfigCellType",
     "BatConfigProtocol",
@@ -80,6 +95,8 @@ __all__ = [
     "BatteryConfigId",
     "BatteryEnergy",
     "BatteryPack",
+    "BatteryString",
+    "BatteryStringComponent",
     "BatteryStrings1To2",
     "BatteryStrings3To8",
     "BatteryTotals",
@@ -131,8 +148,10 @@ __all__ = [
     "PassiveMode",
     "PassiveModeTimeoutAction",
     "PowerControlFlags",
+    "PvString",
     "PvString3",
     "PvString4",
+    "PvStringComponent",
     "PvStrings1To2",
     "PvStrings5To6",
     "PvStrings7To8",

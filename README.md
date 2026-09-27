@@ -111,6 +111,33 @@ register map defines, and `FAULTS_BY_ID` indexes it. A register that has not
 been read yet contributes nothing, so `active_faults` never reports a fault the
 inverter did not actually answer for.
 
+### Numbered strings and corrected totals
+
+PV and battery strings are also reachable by number, as typed views that read
+through whichever component polls them:
+
+```python
+from sofar_modbus.modern import PV_STRING_COMPONENTS
+
+for number, component in PV_STRING_COMPONENTS.items():
+    if component in inverter.readings_components:
+        string = inverter.pv_string(number)
+        print(number, string.voltage, string.power)
+```
+
+`BATTERY_STRING_COMPONENTS` and `battery_string()` do the same for battery
+strings. A number outside the mapping raises `ValueError`.
+
+An energy counter can read back a torn value mid-update. Each one has a
+`*_corrected` handle that holds it at its high-water mark through such a read:
+
+```python
+total = inverter.energy.solar_generation_total_corrected
+total.seed(restored_value)  # before the first poll, e.g. from a saved state
+await inverter.async_update_readings()
+print(total.value)
+```
+
 ### Measurements and settings refresh separately
 
 `SofarInverter` splits its poll by what it reads:
@@ -142,13 +169,14 @@ and `identity`, which holds a serial number, firmware versions and the clock
 served components in one pass through `async_update()`, and does not offer the
 two split update methods.
 
-Writing works the same way — a plain field write for the registers that take
-one, and a method for the registers the device insists on receiving as a block:
+Writing works the same way: a typed method per setting, which also covers the
+registers the device insists on receiving as a block. `write()` by field name
+still reaches any writable field.
 
 ```python
 from sofar_modbus.modern import ChargerUseMode, FeedinLimitationMode
 
-await inverter.charger.write("charger_use_mode", ChargerUseMode.PASSIVE_MODE)
+await inverter.charger.async_write_mode(ChargerUseMode.PASSIVE_MODE)
 await inverter.feed_in.async_write_limit(FeedinLimitationMode.DISABLED, 3000)
 await inverter.passive.async_write_power(
     grid_power=-2000, battery_min=0, battery_max=5000

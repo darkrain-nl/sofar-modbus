@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
 
-from modbus_connection.model import Component, UpdateReport
+from modbus_connection.model import Component, RegisterField, UpdateReport
 
 from .variants import InverterType
 
 __all__ = [
+    "CorrectedTotal",
     "SofarComponent",
     "SofarComponentBase",
     "SofarLegacyComponent",
     "TornReadCorrectedComponent",
     "UpdateReport",
+    "corrected_total",
 ]
 
 
@@ -41,6 +43,18 @@ class TornReadCorrectedComponent(SofarComponent):
     # Fraction below the high-water mark still counted as a torn read.
     _dip_tolerance: ClassVar[float] = 0.01
     _total_increasing_fields: ClassVar[tuple[str, ...]] = ()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Collect the fields a ``corrected_total`` declares."""
+        super().__init_subclass__(**kwargs)
+        cls._total_increasing_fields = tuple(
+            dict.fromkeys(
+                value.field.name
+                for klass in reversed(cls.__mro__)
+                for value in vars(klass).values()
+                if isinstance(value, _CorrectedTotalField)
+            )
+        )
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize the component and its high-water tracking."""
@@ -73,3 +87,50 @@ class TornReadCorrectedComponent(SofarComponent):
                 self._corrected[name] = raw
             else:
                 self._corrected[name] = high_water
+
+
+class CorrectedTotal:
+    """One torn-read-corrected total, read and seeded by the same handle."""
+
+    def __init__(self, component: TornReadCorrectedComponent, name: str) -> None:
+        """Initialize the handle."""
+        self.component = component
+        self.name = name
+
+    @property
+    def value(self) -> float | None:
+        """The corrected value; ``None`` until the first poll."""
+        return self.component.corrected(self.name)
+
+    def seed(self, value: float) -> None:
+        """Prime the high-water mark, e.g. from a restored HA state."""
+        self.component.seed_high_water(self.name, value)
+
+
+class _CorrectedTotalField:
+    """Declare a total field and hand out its ``CorrectedTotal``."""
+
+    def __init__(self, field: RegisterField[float]) -> None:
+        """Initialize the declaration."""
+        self.field = field
+
+    if TYPE_CHECKING:
+
+        @overload
+        def __get__(self, obj: None, objtype: Any = ...) -> Self: ...
+
+        @overload
+        def __get__(
+            self, obj: TornReadCorrectedComponent, objtype: Any = ...
+        ) -> CorrectedTotal: ...
+
+    def __get__(self, obj: Any, objtype: Any = None) -> Any:
+        """The handle on an instance; the declaration on the class."""
+        if obj is None:
+            return self
+        return CorrectedTotal(obj, self.field.name)
+
+
+def corrected_total(field: RegisterField[float]) -> _CorrectedTotalField:
+    """Declare ``field`` a TOTAL_INCREASING total to correct."""
+    return _CorrectedTotalField(field)

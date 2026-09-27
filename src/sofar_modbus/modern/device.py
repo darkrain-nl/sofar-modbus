@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Self
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Final, Self
 
 from modbus_connection import (
     IllegalDataAddressError,
@@ -29,7 +30,12 @@ from ..variants import (
     InverterType,
     matches,
 )
-from .battery import BatteryStrings1To2, BatteryStrings3To8, BatteryTotals
+from .battery import (
+    BatteryString,
+    BatteryStrings1To2,
+    BatteryStrings3To8,
+    BatteryTotals,
+)
 from .battery_pack import BatteryPack
 from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
 from .inverter import GridOutput, Identity, InverterState
@@ -42,6 +48,7 @@ from .masks import (
 )
 from .offgrid import OffGridSinglePhase, OffGridThreePhase, OffGridTotals
 from .pv import (
+    PvString,
     PvString3,
     PvString4,
     PvStrings1To2,
@@ -71,6 +78,25 @@ _LOGGER = logging.getLogger(__name__)
 
 _SET_TIME_REGISTER = 0x1004
 _IV_CURVE_SCAN_REGISTER = 0x1027
+
+# Keys are the valid numbers; values name the component polling each.
+PV_STRING_COMPONENTS: Final[Mapping[int, str]] = MappingProxyType(
+    {
+        1: "pv_1_2",
+        2: "pv_1_2",
+        3: "pv_3",
+        4: "pv_4",
+        5: "pv_5_6",
+        6: "pv_5_6",
+        7: "pv_7_8",
+        8: "pv_7_8",
+        9: "pv_9_10",
+        10: "pv_9_10",
+    }
+)
+BATTERY_STRING_COMPONENTS: Final[Mapping[int, str]] = MappingProxyType(
+    {n: "battery_1_2" if n <= 2 else "battery_3_8" for n in range(1, 9)}
+)
 
 # Ported from the plugin's async_determineInverterType; ordered
 # longest-prefix-first so the first match is the most specific one.
@@ -180,6 +206,15 @@ class SofarInverter(Device):
         # Read via async_read_pack(), one pack at a time; never in the poll.
         self.battery_pack = BatteryPack(unit)
 
+        self._pv_strings = {
+            number: PvString(number, name, getattr(self, name))
+            for number, name in PV_STRING_COMPONENTS.items()
+        }
+        self._battery_strings = {
+            number: BatteryString(number, name, getattr(self, name))
+            for number, name in BATTERY_STRING_COMPONENTS.items()
+        }
+
         self._readings: list[str] = []
         self._settings: list[str] = []
         self._packs_answering: dict[tuple[int, int], bool] = {}
@@ -208,6 +243,18 @@ class SofarInverter(Device):
     def has_battery_tower(self) -> bool:
         """Whether this inverter reports a BTS battery tower."""
         return BAT_BTS in self.inverter_type
+
+    def pv_string(self, number: int) -> PvString:
+        """PV string ``number``, a key of ``PV_STRING_COMPONENTS``."""
+        if (string := self._pv_strings.get(number)) is None:
+            raise ValueError(f"no PV string {number}")
+        return string
+
+    def battery_string(self, number: int) -> BatteryString:
+        """Battery string ``number``, a key of ``BATTERY_STRING_COMPONENTS``."""
+        if (string := self._battery_strings.get(number)) is None:
+            raise ValueError(f"no battery string {number}")
+        return string
 
     @property
     def settings_components(self) -> tuple[str, ...]:

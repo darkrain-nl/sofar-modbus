@@ -2,6 +2,7 @@
 
 from .legacy import SofarLegacyInverter
 from .model import (
+    CorrectedTotal,
     SofarComponent,
     SofarComponentBase,
     SofarLegacyComponent,
@@ -11,6 +12,7 @@ from .modern import SofarInverter
 from .variants import InverterType, matches
 
 __all__ = [
+    "CorrectedTotal",
     "InverterType",
     "SofarComponent",
     "SofarComponentBase",
