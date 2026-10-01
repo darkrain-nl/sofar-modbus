@@ -406,3 +406,16 @@ async def test_a_known_serial_reads_no_mask_to_detect(
         event.address in (0x0480, 0x0580, 0x0600)
         for event in mock_modbus_unit.read_events
     )
+
+
+async def test_a_sleeping_inverter_is_detected_once_it_wakes(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A silent link fails setup, so the next poll asks the masks again."""
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    mock_modbus_unit.fail_requests(ModbusTimeoutError("asleep"))
+    with pytest.raises(ModbusTimeoutError):
+        await device.async_update()
+    mock_modbus_unit.fail_requests(None)
+    await device.async_update()
+    assert device.inverter_type == GEN | X3 | PV
