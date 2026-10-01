@@ -6,6 +6,21 @@ from typing import TYPE_CHECKING
 
 from modbus_connection import ModbusConnectionError, ModbusError
 
+from ..variants import (
+    BAT_BTS,
+    GEN,
+    HYBRID,
+    MPPT3,
+    MPPT4,
+    MPPT6,
+    MPPT8,
+    MPPT10,
+    PV,
+    X1,
+    X3,
+    InverterType,
+)
+
 if TYPE_CHECKING:
     from modbus_connection import ModbusUnit
 
@@ -49,6 +64,22 @@ TOWER_MASK_BLOCKS: tuple[int, ...] = (
     0x9040,  # BMS realtime measurements
 )
 
+_PHASE_S_VOLTAGE = 0x0498  # served by three-phase models only
+_BATTERY_1_VOLTAGE = 0x0604  # served by hybrids only
+
+# PV string voltages, highest first, with the tier polling each. An odd
+# string count rounds up to the component reading the pair.
+_PV_STRING_TIERS: tuple[tuple[int, InverterType], ...] = (
+    (0x059F, MPPT10),
+    (0x059C, MPPT10),
+    (0x0599, MPPT8),
+    (0x0596, MPPT8),
+    (0x0593, MPPT6),
+    (0x0590, MPPT6),
+    (0x058D, MPPT4),
+    (0x058A, MPPT3),
+)
+
 
 async def async_read_mask(unit: ModbusUnit, base: int) -> int | None:
     """The block's declared-valid mask, or ``None`` if it answers none.
@@ -73,7 +104,41 @@ async def async_serves(unit: ModbusUnit, address: int) -> bool | None:
     ``None`` when it publishes no usable mask, which decides nothing.
     """
     base = address - address % BLOCK_SIZE
-    mask = await async_read_mask(unit, base)
+    return _declares(await async_read_mask(unit, base), base, address)
+
+
+async def async_detect_type(unit: ModbusUnit) -> InverterType | None:
+    """The inverter type the model's masks declare.
+
+    ``None`` when a block it needs publishes no usable mask.
+    """
+    masks: dict[int, int | None] = {}
+
+    async def serves(address: int) -> bool | None:
+        base = address - address % BLOCK_SIZE
+        if base not in masks:
+            masks[base] = await async_read_mask(unit, base)
+        return _declares(masks[base], base, address)
+
+    if (three_phase := await serves(_PHASE_S_VOLTAGE)) is None:
+        return None
+    if (hybrid := await serves(_BATTERY_1_VOLTAGE)) is None:
+        return None
+    detected = GEN | (X3 if three_phase else X1) | (HYBRID if hybrid else PV)
+    for address, tier in _PV_STRING_TIERS:
+        if (served := await serves(address)) is None:
+            return None
+        if served:
+            detected |= tier
+            break
+    # A tower's usable mask declares its own base like any other.
+    if hybrid and await async_serves(unit, TOWER_MASK_BLOCKS[0]):
+        detected |= BAT_BTS
+    return detected
+
+
+def _declares(mask: int | None, base: int, address: int) -> bool | None:
+    """Whether ``mask`` declares ``address`` valid; ``None`` if unusable."""
     if mask is None or mask & _SELF_BITS != _SELF_BITS:
         return None
     return bool(mask >> (address - base) & 1)

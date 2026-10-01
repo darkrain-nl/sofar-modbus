@@ -34,6 +34,14 @@ touched: an inverter without batteries never sees a battery register. A caller
 that already knows the serial number passes it to the constructor instead,
 which reads nothing.
 
+A serial matching none of the prefixes above leaves the type empty until
+setup, which then takes it from the inverter's own address masks (see below):
+phase count from the grid block, PV or hybrid from the battery block, the MPPT
+tier from the highest PV string served, and a BTS tower from the tower's mask.
+This is derived from Sofar's register map, not checked against every model, so
+the model name stays `None`. An inverter publishing no usable mask keeps the
+empty type and polls nothing, as before.
+
 ## Usage
 
 ```python
@@ -222,8 +230,9 @@ because an inverter answers a register it does not serve rather than refusing
 it, usually with zeros but not always, so the mask is the only dependable
 statement of what a model supports. Blocks answering no mask are left out, and
 the battery tower's blocks are only asked for when the inverter reports a tower,
-since asking without one buys a timeout. Nothing decides what to poll from these
-yet: today they are for reading, not for detection.
+since asking without one buys a timeout. The meter counters are dropped when
+the energy block's mask denies them, and an unrecognised serial takes its type
+from them.
 
 ## Checking a real inverter
 
@@ -361,8 +370,9 @@ whoever builds the connection.
 The `sofar_modbus` logger says, at `DEBUG`, why a device is polled the way it
 is and what the tuner changed:
 
-- which model a serial identified as, whether the off-grid block answered, which
-  components a mask denied, and the final poll list
+- which model a serial identified as, the type an unrecognised one declared in
+  its masks, whether the off-grid block answered, which components a mask
+  denied, and the final poll list
 - every timeout the tuner asks for or withdraws, every change to the gap
   between frames or the pause after connecting, and each step it wanted to take
   but was already at its limit for
