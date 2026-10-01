@@ -56,6 +56,7 @@ from .enums import (
 )
 from .faults import FAULTS, FAULTS_BY_ID, Fault, FaultCategory
 from .inverter import GridOutput, Identity, InverterState
+from .masks import async_detect_type
 from .offgrid import OffGridSinglePhase, OffGridThreePhase, OffGridTotals
 from .pv import (
     PvString,
@@ -162,5 +163,6 @@ __all__ = [
     "SofarInverter",
     "SyncRtcResult",
     "SystemState",
+    "async_detect_type",
     "identify",
 ]

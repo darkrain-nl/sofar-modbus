@@ -40,7 +40,8 @@ phase count from the grid block, PV or hybrid from the battery block, the MPPT
 tier from the highest PV string served, and a BTS tower from the tower's mask.
 This is derived from Sofar's register map, not checked against every model, so
 the model name stays `None`. An inverter publishing no usable mask keeps the
-empty type and polls nothing, as before.
+empty type and polls nothing, as before. `async_detect_type(unit)` asks the
+same question without a device, for a caller vetting a serial before setup.
 
 ## Usage
 

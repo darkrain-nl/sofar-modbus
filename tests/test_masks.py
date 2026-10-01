@@ -13,6 +13,7 @@ from modbus_connection import (
 from modbus_connection.mock import MockModbusUnit
 
 from sofar_modbus import SofarInverter
+from sofar_modbus.modern import async_detect_type
 from sofar_modbus.variants import (
     EPS,
     GEN,
@@ -419,3 +420,17 @@ async def test_a_sleeping_inverter_is_detected_once_it_wakes(
     mock_modbus_unit.fail_requests(None)
     await device.async_update()
     assert device.inverter_type == GEN | X3 | PV
+
+
+async def test_the_type_can_be_detected_without_a_device(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A caller vetting an unknown serial needs no setup to ask."""
+    for base, mask in KTLX_G3_MASKS.items():
+        mock_modbus_unit.holding[base] = mask_registers(mask)
+    assert await async_detect_type(mock_modbus_unit) == GEN | X3 | PV
+    assert [event.address for event in mock_modbus_unit.read_events] == [
+        0x0480,
+        0x0600,
+        0x0580,
+    ]
