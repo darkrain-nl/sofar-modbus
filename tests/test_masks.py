@@ -13,7 +13,19 @@ from modbus_connection import (
 from modbus_connection.mock import MockModbusUnit
 
 from sofar_modbus import SofarInverter
-from sofar_modbus.variants import GEN, PV, X1
+from sofar_modbus.modern import async_detect_type
+from sofar_modbus.variants import (
+    EPS,
+    GEN,
+    HYBRID,
+    MPPT4,
+    MPPT6,
+    PM,
+    PV,
+    X1,
+    X3,
+    InverterType,
+)
 
 from .conftest import HYBRID_SERIAL, MODERN_HOLDING
 
@@ -46,6 +58,48 @@ MODELED_BLOCKS = [
     0x1180,
 ]
 TOWER_BLOCKS = [0x9000, 0x9040]
+
+UNKNOWN_SERIAL = "NOPE000000001"
+
+# A diagnostics download from the same 4.4 KTLX-G3, keyed by block base.
+KTLX_G3_MASKS = {
+    0x0400: 0x0003FFC00581FFFF,
+    0x0440: 0x0000003FFFFFEFEF,
+    0x0480: 0x1C0082184308617F,
+    0x0500: 0x000000000000000F,
+    0x0580: 0x00000000000003FF,
+    0x05C0: 0x000000000000001F,
+    0x0600: 0x000000000000000F,
+    0x0640: 0x000000000000000F,
+    0x0680: 0x00000000000000FF,
+    0x06C0: 0x00000000000071DF,
+    0x1000: 0x001F41FE0006FFFF,
+    0x1040: 0x000000000000000F,
+    0x1100: 0x000000000000001F,
+    0x1180: 0x000000000000000F,
+}
+
+# A single-phase hybrid with four strings, spelled out from the spec.
+SINGLE_PHASE_GRID_MASK = 0x0F | 1 << 0x0D  # voltage L1 only
+FOUR_STRING_PV_MASK = 0xFFFF  # 0x0584-0x058F
+FIVE_STRING_PV_MASK = 0x3FFFF  # 0x0584-0x0592
+TWO_BATTERY_MASK = 0x3FFFF  # 0x0604-0x0611
+TOWER_MASK = 0x0F
+
+
+def mask_registers(mask: int) -> list[int]:
+    """Split a mask into its four registers, most significant first."""
+    return [mask >> shift & 0xFFFF for shift in (48, 32, 16, 0)]
+
+
+def unknown_inverter(
+    unit: MockModbusUnit, masks: dict[int, int], *, read_pm: bool = False
+) -> SofarInverter:
+    """An inverter whose serial is unknown, publishing ``masks``."""
+    unit.holding.update(MODERN_HOLDING)
+    for base, mask in masks.items():
+        unit.holding[base] = mask_registers(mask)
+    return SofarInverter(unit, serial_number=UNKNOWN_SERIAL, read_pm=read_pm)
 
 
 @pytest.fixture
@@ -201,3 +255,182 @@ async def test_a_model_without_the_component_is_not_asked(
     await device.async_update()
     assert "meter_energy" not in device.readings_components
     assert not any(event.address == 0x0680 for event in mock_modbus_unit.read_events)
+
+
+async def test_an_unknown_serial_takes_its_type_from_the_masks(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """Hardware masks must land on what the SS2E prefix gives that unit."""
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    await device.async_update()
+    assert device.inverter_type == GEN | X3 | PV
+    assert device.readings_components == ("state", "grid", "pv_1_2", "energy")
+    assert device.model is None
+
+
+async def test_a_hybrid_is_detected_from_its_battery_and_strings(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    device = unknown_inverter(
+        mock_modbus_unit,
+        {
+            0x0480: SINGLE_PHASE_GRID_MASK,
+            0x0580: FOUR_STRING_PV_MASK,
+            0x0600: TWO_BATTERY_MASK,
+        },
+    )
+    await device.async_update()
+    assert device.inverter_type == GEN | X1 | HYBRID | MPPT4 | EPS
+    assert not device.has_battery_tower
+    assert device.readings_components == (
+        "state",
+        "grid",
+        "offgrid",
+        "offgrid_single_phase",
+        "pv_1_2",
+        "pv_3",
+        "pv_4",
+        "battery_1_2",
+        "battery_3_8",
+        "battery_totals",
+        "energy",
+        "meter_energy",
+        "battery_energy",
+    )
+
+
+async def test_a_hybrid_with_a_tower_mask_has_a_tower(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    device = unknown_inverter(
+        mock_modbus_unit,
+        {
+            0x0480: SINGLE_PHASE_GRID_MASK,
+            0x0580: FOUR_STRING_PV_MASK,
+            0x0600: TWO_BATTERY_MASK,
+            0x9000: TOWER_MASK,
+        },
+    )
+    await device.async_update()
+    assert device.has_battery_tower
+
+
+async def test_a_pv_inverter_is_not_asked_about_a_tower(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """Asking a tower-less inverter for the BMS mask only buys a timeout."""
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    await device.async_update()
+    assert not any(event.address >= 0x9000 for event in mock_modbus_unit.read_events)
+
+
+async def test_an_odd_string_count_polls_the_whole_pair(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """Dropping string 5 would hide a real reading to avoid a denied one."""
+    device = unknown_inverter(
+        mock_modbus_unit,
+        {
+            0x0480: KTLX_G3_MASKS[0x0480],
+            0x0580: FIVE_STRING_PV_MASK,
+            0x0600: KTLX_G3_MASKS[0x0600],
+        },
+    )
+    await device.async_update()
+    assert device.inverter_type == GEN | X3 | PV | MPPT6
+
+
+async def test_detection_reads_only_the_blocks_it_decides_on(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    await device.async_ensure_setup()
+    masks_read = [
+        event.address
+        for event in mock_modbus_unit.read_events
+        if event.address & 0x3F == 0
+    ]
+    assert masks_read == [0x0480, 0x0600, 0x0580, 0x0680]
+
+
+async def test_a_model_publishing_no_mask_stays_unknown(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Without a usable mask nothing changes: the type stays empty."""
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    device = unknown_inverter(mock_modbus_unit, {})
+    await device.async_update()
+    assert device.inverter_type == InverterType(0)
+    assert device.readings_components == ()
+    assert (
+        "Inverter NOPE000000001 publishes no usable mask, its type stays unknown"
+        in caplog.messages
+    )
+
+
+@pytest.mark.parametrize("refused", [0x0480, 0x0600, 0x0580])
+async def test_one_refused_block_decides_nothing(
+    mock_modbus_unit: MockModbusUnit, refused: int
+) -> None:
+    """A half-known type would poll the wrong phase count or battery."""
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    mock_modbus_unit.fail_read(refused, IllegalDataAddressError())
+    await device.async_update()
+    assert device.inverter_type == InverterType(0)
+
+
+async def test_a_detected_type_is_logged(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    await device.async_update()
+    assert (
+        "Inverter NOPE000000001 declares itself GEN|X3|PV in its masks"
+        in caplog.messages
+    )
+
+
+async def test_detection_keeps_read_pm(mock_modbus_unit: MockModbusUnit) -> None:
+    """Parallel-system registers are the caller's call, not the mask's."""
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS, read_pm=True)
+    await device.async_update()
+    assert device.inverter_type == GEN | X3 | PV | PM
+
+
+async def test_a_known_serial_reads_no_mask_to_detect(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """The prefix table already settled it, so detection never runs."""
+    await hybrid.async_update()
+    assert not any(
+        event.address in (0x0480, 0x0580, 0x0600)
+        for event in mock_modbus_unit.read_events
+    )
+
+
+async def test_a_sleeping_inverter_is_detected_once_it_wakes(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A silent link fails setup, so the next poll asks the masks again."""
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    mock_modbus_unit.fail_requests(ModbusTimeoutError("asleep"))
+    with pytest.raises(ModbusTimeoutError):
+        await device.async_update()
+    mock_modbus_unit.fail_requests(None)
+    await device.async_update()
+    assert device.inverter_type == GEN | X3 | PV
+
+
+async def test_the_type_can_be_detected_without_a_device(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A caller vetting an unknown serial needs no setup to ask."""
+    for base, mask in KTLX_G3_MASKS.items():
+        mock_modbus_unit.holding[base] = mask_registers(mask)
+    assert await async_detect_type(mock_modbus_unit) == GEN | X3 | PV
+    assert [event.address for event in mock_modbus_unit.read_events] == [
+        0x0480,
+        0x0600,
+        0x0580,
+    ]

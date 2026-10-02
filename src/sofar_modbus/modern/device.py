@@ -43,6 +43,7 @@ from .masks import (
     GATED_COMPONENTS,
     MASK_BLOCKS,
     TOWER_MASK_BLOCKS,
+    async_detect_type,
     async_read_mask,
     async_serves,
 )
@@ -268,6 +269,8 @@ class SofarInverter(Device):
 
     async def _async_setup(self) -> None:
         """Settle which optional sub-systems this inverter serves."""
+        if not self.inverter_type & ~PM:
+            await self._async_detect_type()
         await self.rating.async_update(notify=False)
         if (
             EPS not in self.inverter_type
@@ -324,6 +327,21 @@ class SofarInverter(Device):
             ", ".join(self._readings) or "nothing",
             ", ".join(self._settings) or "nothing",
         )
+
+    async def _async_detect_type(self) -> None:
+        """Take the type from the masks when the serial settled none."""
+        if (detected := await async_detect_type(self.modbus_unit)) is None:
+            _LOGGER.debug(
+                "Inverter %s publishes no usable mask, its type stays unknown",
+                self.serial_number,
+            )
+            return
+        _LOGGER.debug(
+            "Inverter %s declares itself %s in its masks",
+            self.serial_number,
+            detected.name,
+        )
+        self.inverter_type |= detected
 
     async def _async_drop_denied_components(self) -> None:
         """Stop polling components the model says it does not serve.
