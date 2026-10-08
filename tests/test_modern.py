@@ -128,6 +128,64 @@ async def test_component_names_are_empty_until_setup(
     assert not set(hybrid.readings_components) & set(hybrid.settings_components)
 
 
+async def test_expected_components_come_from_the_type_before_setup(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A caller can lay out entities before the inverter first answers."""
+    assert hybrid.expected_readings_components == (
+        "state",
+        "grid",
+        "pv_1_2",
+        "battery_1_2",
+        "battery_3_8",
+        "battery_totals",
+        "energy",
+        "meter_energy",
+        "battery_energy",
+    )
+    assert hybrid.expected_settings_components == (
+        "rtc_sync",
+        "feed_in",
+        "battery_active_control",
+        "parallel",
+        "battery_config_id",
+        "battery_config",
+        "remote",
+        "active_power_control",
+        "charger",
+        "passive",
+    )
+    assert not mock_modbus_unit.read_events
+
+    await hybrid.async_update()
+
+    assert hybrid.expected_readings_components == hybrid.readings_components
+    assert hybrid.expected_settings_components == hybrid.settings_components
+    assert "offgrid" in hybrid.expected_readings_components
+
+
+async def test_expected_components_survive_a_failed_setup(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A half-run setup must not leave a partial list behind."""
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.fail_read(0x0504, ServerDeviceFailureError())
+    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
+    before = inverter.expected_readings_components
+    with pytest.raises(ServerDeviceFailureError):
+        await inverter.async_update()
+    assert inverter.expected_readings_components == before
+
+
+def test_an_unknown_serial_expects_nothing_before_setup(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """The masks settle an unknown type, and they need setup to be read."""
+    inverter = SofarInverter(mock_modbus_unit, serial_number="NOPE000000001")
+    assert inverter.expected_readings_components == ()
+    assert inverter.expected_settings_components == ()
+
+
 async def test_readings_and_settings_polls_are_disjoint(
     hybrid: SofarInverter,
 ) -> None:

@@ -168,6 +168,15 @@ await inverter.async_update_readings()  # every cycle
 await inverter.async_update_settings()  # rarely, and after a write
 ```
 
+`readings_components` and `settings_components` stay empty until the first
+poll settles what the inverter serves, which needs it to answer. A caller that
+has to lay out entities before then, say at night, can use
+`expected_readings_components` and `expected_settings_components`: the
+components the serial's type implies, without touching the link. Once setup
+settles they return the same lists as the plain properties, so setup can still
+add the off-grid components it probed for and drop the ones a mask denies. An
+unrecognised serial expects nothing, as its type comes from the masks.
+
 This is worth scheduling: a three-phase HYD hybrid polls 276 registers in 31 blocks,
 of which the settings are 65 registers in 13 blocks — the 0x1000 settings block,
 and `identity`, which holds a serial number, firmware versions and the clock
