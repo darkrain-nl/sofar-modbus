@@ -99,6 +99,39 @@ BATTERY_STRING_COMPONENTS: Final[Mapping[int, str]] = MappingProxyType(
     {n: "battery_1_2" if n <= 2 else "battery_3_8" for n in range(1, 9)}
 )
 
+_READING_COMPONENTS = (
+    "state",
+    "grid",
+    "offgrid",
+    "offgrid_single_phase",
+    "offgrid_three_phase",
+    "pv_1_2",
+    "pv_3",
+    "pv_4",
+    "pv_5_6",
+    "pv_7_8",
+    "pv_9_10",
+    "battery_1_2",
+    "battery_3_8",
+    "battery_totals",
+    "energy",
+    "meter_energy",
+    "battery_energy",
+)
+_SETTING_COMPONENTS = (
+    "rtc_sync",
+    "feed_in",
+    "eps",
+    "battery_active_control",
+    "parallel",
+    "battery_config_id",
+    "battery_config",
+    "remote",
+    "active_power_control",
+    "charger",
+    "passive",
+)
+
 # Ported from the plugin's async_determineInverterType; ordered
 # longest-prefix-first so the first match is the most specific one.
 _SERIAL_PREFIXES: tuple[tuple[str, InverterType, str | None], ...] = (
@@ -218,6 +251,7 @@ class SofarInverter(Device):
 
         self._readings: list[str] = []
         self._settings: list[str] = []
+        self._settled = False
         self._packs_answering: dict[tuple[int, int], bool] = {}
 
     @classmethod
@@ -267,6 +301,28 @@ class SofarInverter(Device):
         """Reading component names this inverter polls; empty before setup."""
         return tuple(self._readings)
 
+    @property
+    def expected_settings_components(self) -> tuple[str, ...]:
+        """Settings components polled, or the type's before setup."""
+        if self._settled:
+            return tuple(self._settings)
+        return tuple(self._components_for(_SETTING_COMPONENTS))
+
+    @property
+    def expected_readings_components(self) -> tuple[str, ...]:
+        """Reading components polled, or the type's before setup."""
+        if self._settled:
+            return tuple(self._readings)
+        return tuple(self._components_for(_READING_COMPONENTS))
+
+    def _components_for(self, names: tuple[str, ...]) -> list[str]:
+        """The components among ``names`` this inverter's type applies to."""
+        return [
+            name
+            for name in names
+            if matches(self.inverter_type, getattr(self, name).applies_to)
+        ]
+
     async def _async_setup(self) -> None:
         """Settle which optional sub-systems this inverter serves."""
         if not self.inverter_type & ~PM:
@@ -278,47 +334,10 @@ class SofarInverter(Device):
             and await self._async_probe_eps()
         ):
             self.inverter_type |= EPS
-        self._readings = [
-            name
-            for name in (
-                "state",
-                "grid",
-                "offgrid",
-                "offgrid_single_phase",
-                "offgrid_three_phase",
-                "pv_1_2",
-                "pv_3",
-                "pv_4",
-                "pv_5_6",
-                "pv_7_8",
-                "pv_9_10",
-                "battery_1_2",
-                "battery_3_8",
-                "battery_totals",
-                "energy",
-                "meter_energy",
-                "battery_energy",
-            )
-            if matches(self.inverter_type, getattr(self, name).applies_to)
-        ]
+        self._readings = self._components_for(_READING_COMPONENTS)
         await self._async_drop_denied_components()
-        self._settings = [
-            name
-            for name in (
-                "rtc_sync",
-                "feed_in",
-                "eps",
-                "battery_active_control",
-                "parallel",
-                "battery_config_id",
-                "battery_config",
-                "remote",
-                "active_power_control",
-                "charger",
-                "passive",
-            )
-            if matches(self.inverter_type, getattr(self, name).applies_to)
-        ]
+        self._settings = self._components_for(_SETTING_COMPONENTS)
+        self._settled = True
         _LOGGER.debug(
             "Inverter %s is %s, model %s; readings: %s; settings: %s",
             self.serial_number,
