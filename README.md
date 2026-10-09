@@ -307,11 +307,10 @@ connection runs with the largest value any of its units asks for, so a device
 sharing the link can raise it, and a lowered value takes effect at the next
 connect rather than on the link already open.
 
-### Or let the link say it itself
+## Tuning the link from its own traffic
 
-`LinkTuner` does the measuring and the asking, for a caller that would rather
-not pick a number. Give it the same wrapper the inverter reads through, and
-hand it each poll's report:
+`LinkTuner` paces a link from what its polls tell it. Give it the same wrapper
+the inverter reads through, and hand it each poll's report:
 
 ```python
 from sofar_modbus.tuning import LinkTuner, TimedUnit
@@ -329,20 +328,14 @@ while True:
 ```
 
 Both halves matter. A poll gives up and raises rather than reporting when the
-link is down, or when it times out before anything has answered, and that
-second case is exactly what a timeout asked for too tightly looks like. A
-consumer that only calls `observe()` would leave the tuner holding an ask the
-link can no longer meet.
+link is down, or when it times out before anything has answered. Its reads
+still count towards the gap's budget, and its opening requests towards the
+pause after connecting.
 
-It tunes two things, from what the polls tell it.
-
-**The timeout.** After five polls with nothing timing out, it asks for four
-times the slowest request it saw, which on a link answering in 370 ms is about
-1.5 seconds instead of ten. It only ever lowers: a link too slow to be worth
-asking about keeps its own default, and a timeout under a value the tuner asked
-for withdraws that ask entirely and waits twice as long before trying again,
-whether the poll reported that timeout or raised it. So the worst it can do is
-hand the link back what it started with.
+It tunes two things. The timeout is not one of them: the connection runs with
+the largest timeout any of its units asks for, and a unit that asks for nothing
+does not count, so a lower one would also hold every device sharing the link
+to it.
 
 **The gap between frames.** A device that cannot take requests back to back
 says so by answering the wrong exchange (`ModbusDesyncError`), by reporting
@@ -359,8 +352,8 @@ moment the socket is. Two opening requests that go unanswered earn a quarter
 second, then half, then one, then two. This one is never given back: it costs a
 single wait per connect, and a device that needed it still does.
 
-`tuner.tuning` is what it asks of the link and how often it has had to give up,
-which is worth putting in a diagnostics download, and worth storing:
+`tuner.tuning` is what it asks of the link, which is worth putting in a
+diagnostics download, and worth storing:
 
 ```python
 tuner.restore(saved)  # before the first poll
@@ -368,8 +361,8 @@ tuner.restore(saved)  # before the first poll
 save(tuner.tuning)  # whenever it changes
 ```
 
-Restoring brings back the patience that came with it, so a link that had to
-hand a timeout back is not asked the same question after every restart.
+Restoring brings back the patience that came with a wider gap, so a crowded
+line is not narrowed again straight after every restart.
 
 The gap is per unit, so it paces this inverter's own frames and no one else's.
 A line shared with another device cannot be quieted from here, only from
@@ -383,9 +376,8 @@ is and what the tuner changed:
 - which model a serial identified as, the type an unrecognised one declared in
   its masks, whether the off-grid block answered, which components a mask
   denied, and the final poll list
-- every timeout the tuner asks for or withdraws, every change to the gap
-  between frames or the pause after connecting, and each step it wanted to take
-  but was already at its limit for
+- every change the tuner makes to the gap between frames or the pause after
+  connecting, and each step it wanted to take but was already at its limit for
 - a battery pack starting or stopping to answer, including a tower still serving
   another pack; a pack that keeps answering logs only once
 
