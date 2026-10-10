@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from modbus_connection import ModbusConnectionError, ModbusError
+from modbus_connection import (
+    ModbusConnectionError,
+    ModbusError,
+    ModbusTimeoutError,
+)
 
 from ..variants import (
     BAT_BTS,
@@ -87,9 +91,17 @@ async def async_read_mask(unit: ModbusUnit, base: int) -> int | None:
     Bit ``n`` is ``base + n``, most significant register first.
     """
     try:
+        return await _async_read_mask(unit, base)
+    except ModbusTimeoutError:
+        return None
+
+
+async def _async_read_mask(unit: ModbusUnit, base: int) -> int | None:
+    """The block's mask, or ``None`` if refused; a timeout propagates."""
+    try:
         registers = await unit.read_holding_registers(base, MASK_REGISTERS)
-    except ModbusConnectionError:
-        raise  # a dead link is not an absent mask
+    except (ModbusConnectionError, ModbusTimeoutError):
+        raise  # a dead or silent link is not an absent mask
     except ModbusError:
         return None
     value = 0
@@ -108,16 +120,14 @@ async def async_serves(unit: ModbusUnit, address: int) -> bool | None:
 
 
 async def async_detect_type(unit: ModbusUnit) -> InverterType | None:
-    """The inverter type the model's masks declare.
-
-    ``None`` when a block it needs publishes no usable mask.
-    """
+    """The type the model's masks declare, ``None`` if one is unusable."""
     masks: dict[int, int | None] = {}
 
     async def serves(address: int) -> bool | None:
         base = address - address % BLOCK_SIZE
         if base not in masks:
-            masks[base] = await async_read_mask(unit, base)
+            # A missed answer is no verdict, so it must not settle a type.
+            masks[base] = await _async_read_mask(unit, base)
         return _declares(masks[base], base, address)
 
     if (three_phase := await serves(_PHASE_S_VOLTAGE)) is None:
@@ -131,7 +141,7 @@ async def async_detect_type(unit: ModbusUnit) -> InverterType | None:
         if served:
             detected |= tier
             break
-    # A tower's usable mask declares its own base like any other.
+    # A tower's usable mask declares its own base; no tower times out.
     if hybrid and await async_serves(unit, TOWER_MASK_BLOCKS[0]):
         detected |= BAT_BTS
     return detected
