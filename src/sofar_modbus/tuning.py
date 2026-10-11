@@ -194,32 +194,6 @@ def _percentile(answered: list[float], fraction: float) -> float | None:
     return answered[min(len(answered) - 1, int(len(answered) * fraction))]
 
 
-MARGIN = 4.0
-"""Headroom over the slowest request that answered.
-
-The slowest, not a percentile: a gateway that caches blocks answers most
-reads in about a millisecond and a real fetch in hundreds, so a median
-describes the cache rather than the device behind it.
-"""
-
-FLOOR = 0.5
-"""The shortest timeout worth asking for, whatever the window says."""
-
-MAX_ASK = 10.0
-"""The link's own default: asking for this or more would change nothing."""
-
-MIN_ANSWERED = 20
-"""Answered requests before the window says anything about the link."""
-
-CLEAN_POLLS = 5
-"""Polls without a timeout before the tuner acts on what it measured."""
-
-MAX_CLEAN_POLLS = 80
-"""The longest wait a link that keeps timing out is made to serve."""
-
-WORTH_ASKING = 0.75
-"""A new target is only asked for below this much of the standing one."""
-
 SPACING_STEPS = (0.02, 0.03, 0.05, 0.1, 0.2)
 """Gaps to try between this unit's own frames, narrowest first.
 
@@ -247,41 +221,23 @@ FAILED_OPENS = 2
 """Opening requests that went unanswered before asking for a pause."""
 
 
-def target_timeout(slowest: float | None) -> float | None:
-    """The timeout this slowest answer earns, or ``None`` to ask nothing.
-
-    Nothing measured, or a link whose own default is the honest answer.
-    """
-    if slowest is None:
-        return None
-    target = max(slowest * MARGIN, FLOOR)
-    # Rounded because this value is read by people, in logs and diagnostics.
-    return None if target >= MAX_ASK else round(target, 2)
-
-
 @dataclass(frozen=True)
 class LinkTuning:
-    """What the tuner asks of a link, and how often it has withdrawn."""
+    """What the tuner asks of a link."""
 
-    timeout: float | None = None
     spacing: float = 0.0
     connect_delay: float = 0.0
+    # Always None and 0: Home Assistant's diagnostics still read them.
+    timeout: float | None = None
     withdrawals: int = 0
 
 
 class LinkTuner:
-    """Hold a link to the timing its own traffic says it needs.
-
-    The timeout only comes down; the gap only widens on a crowded line.
-    """
+    """Hold a link to the timing its own traffic says it needs."""
 
     def __init__(self, unit: TimedUnit, *, budget: float = BUDGET) -> None:
         self._unit = unit
         self._budget = budget
-        self._asked: float | None = None
-        self._withdrawals = 0
-        self._clean = 0
-        self._required = CLEAN_POLLS
         self._spacing = 0.0
         self._crowded = 0
         self._quiet = 0
@@ -297,13 +253,12 @@ class LinkTuner:
     @property
     def tuning(self) -> LinkTuning:
         """What is being asked of the link as things stand."""
-        return LinkTuning(self._asked, self._spacing, self._delay, self._withdrawals)
+        return LinkTuning(spacing=self._spacing, connect_delay=self._delay)
 
     def observe(self, report: UpdateReport) -> None:
         """Take one poll's outcome in, between polls and nowhere else."""
         self._count_reads()
         self._observe_spacing(report)
-        self._observe_timeout(report)
         self._observe_opening()
         # A component has to have answered once for its silence to mean
         # anything, so this trails the poll that is being judged.
@@ -312,15 +267,9 @@ class LinkTuner:
     def observe_failure(self, err: ModbusError) -> None:
         """Take in a poll that raised rather than reporting.
 
-        It named no component, so only the timing can be judged from it.
+        It named no component, so only its reads and opens count.
         """
         self._count_reads()
-        if isinstance(err, ModbusTimeoutError):
-            self._withdraw()
-        else:
-            # A link that is down says nothing about an ask being too
-            # tight, but it measured nothing either.
-            self._clean = 0
         self._observe_opening()
 
     def _count_reads(self) -> None:
@@ -429,64 +378,11 @@ class LinkTuner:
         Patience comes back with it, or a restart resets every backoff.
         """
         _LOGGER.debug("Restoring %s", tuning)
-        self._asked = tuning.timeout
         self._spacing = tuning.spacing
         self._delay = tuning.connect_delay
-        self._withdrawals = tuning.withdrawals
-        self._required = min(CLEAN_POLLS * 2**tuning.withdrawals, MAX_CLEAN_POLLS)
         steps = sum(1 for gap in SPACING_STEPS if gap <= tuning.spacing)
         self._required_quiet = min(QUIET_POLLS * 2**steps, MAX_QUIET_POLLS)
-        if tuning.timeout is not None:
-            self._unit.require_timeout(tuning.timeout)
         if tuning.spacing:
             self._unit.set_message_spacing(tuning.spacing)
         if tuning.connect_delay:
             self._unit.require_connect_delay(tuning.connect_delay)
-
-    def _observe_timeout(self, report: UpdateReport) -> None:
-        """Lower the timeout a quiet link has earned, or hand its own back."""
-        if any(isinstance(err, ModbusTimeoutError) for err in report.failed.values()):
-            self._withdraw()
-            return
-        self._clean += 1
-        if self._clean < self._required:
-            return
-        stats = self._unit.stats
-        if stats.answered < MIN_ANSWERED:
-            return
-        target = target_timeout(stats.slowest)
-        if target is None:
-            return
-        if self._asked is None or target < self._asked * WORTH_ASKING:
-            _LOGGER.debug(
-                "Asking for a %s s timeout: the slowest of %d answers took %.3f s",
-                target,
-                stats.answered,
-                stats.slowest,
-            )
-            self._ask(target)
-
-    def _ask(self, seconds: float) -> None:
-        """Lower the link's timeout, and earn the next lowering again."""
-        self._unit.require_timeout(seconds)
-        self._asked = seconds
-        self._clean = 0
-
-    def _withdraw(self) -> None:
-        """Hand the link back its own timeout, and wait longer next time.
-
-        A timeout while nothing was asked is the device's, not ours.
-        """
-        self._clean = 0
-        if self._asked is None:
-            return
-        self._unit.require_timeout(None)
-        self._withdrawals += 1
-        self._required = min(self._required * 2, MAX_CLEAN_POLLS)
-        _LOGGER.debug(
-            "Withdrawing the %s s timeout after a request timed out; "
-            "asking again takes %d clean polls",
-            self._asked,
-            self._required,
-        )
-        self._asked = None

@@ -235,11 +235,14 @@ async def test_a_self_denying_mask_is_not_trusted(
     assert "meter_energy" in pv_inverter.readings_components
 
 
+@pytest.mark.parametrize(
+    "error", [IllegalDataAddressError(), ModbusTimeoutError("no answer")]
+)
 async def test_an_unanswered_energy_block_keeps_the_meter_block(
-    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit
+    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit, error: Exception
 ) -> None:
-    """A model that refuses the mask has not denied anything."""
-    mock_modbus_unit.fail_read(0x0680, IllegalDataAddressError())
+    """A model that refuses or ignores the mask has not denied anything."""
+    mock_modbus_unit.fail_read(0x0680, error)
     await pv_inverter.async_update()
     assert "meter_energy" in pv_inverter.readings_components
 
@@ -377,6 +380,38 @@ async def test_one_refused_block_decides_nothing(
     mock_modbus_unit.fail_read(refused, IllegalDataAddressError())
     await device.async_update()
     assert device.inverter_type == InverterType(0)
+
+
+@pytest.mark.parametrize("silent", [0x0480, 0x0600, 0x0580])
+async def test_one_unanswered_block_is_asked_again(
+    mock_modbus_unit: MockModbusUnit, silent: int
+) -> None:
+    """A dropped frame is no verdict, so it must not settle the type."""
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    mock_modbus_unit.fail_read(silent, ModbusTimeoutError("no answer"))
+    with pytest.raises(ModbusTimeoutError):
+        await device.async_update()
+    mock_modbus_unit.fail_read(silent, None)
+    await device.async_update()
+    assert device.inverter_type == GEN | X3 | PV
+
+
+async def test_a_hybrid_whose_tower_mask_times_out_has_no_tower(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """Only a tower answers its BMS block, so silence there means none."""
+    device = unknown_inverter(
+        mock_modbus_unit,
+        {
+            0x0480: SINGLE_PHASE_GRID_MASK,
+            0x0580: FOUR_STRING_PV_MASK,
+            0x0600: TWO_BATTERY_MASK,
+        },
+    )
+    mock_modbus_unit.fail_read(0x9000, ModbusTimeoutError("no tower"))
+    await device.async_update()
+    assert device.inverter_type & HYBRID
+    assert not device.has_battery_tower
 
 
 async def test_a_detected_type_is_logged(

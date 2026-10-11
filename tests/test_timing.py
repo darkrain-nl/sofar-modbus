@@ -8,7 +8,6 @@ from collections.abc import Callable
 
 import pytest
 from modbus_connection import (
-    IllegalDataAddressError,
     ModbusConnectionError,
     ModbusDesyncError,
     ModbusTimeoutError,
@@ -20,17 +19,14 @@ from modbus_connection.model import UpdateReport
 
 from sofar_modbus import SofarInverter, SofarLegacyInverter
 from sofar_modbus.tuning import (
-    CLEAN_POLLS,
     CONNECT_DELAYS,
     CROWDED_POLLS,
     FAILED_OPENS,
-    FLOOR,
     QUIET_POLLS,
     SPACING_STEPS,
     LinkTuner,
     LinkTuning,
     TimedUnit,
-    target_timeout,
 )
 
 from .conftest import HYBRID_SERIAL, MODERN_HOLDING
@@ -167,92 +163,18 @@ def tuned(mock_modbus_unit: MockModbusUnit) -> tuple[SofarInverter, LinkTuner]:
     )
 
 
-def test_a_target_leaves_room_over_the_slowest_answer() -> None:
-    assert target_timeout(0.4) == pytest.approx(1.6)
-
-
-def test_a_quick_link_still_gets_the_floor() -> None:
-    """Four times nothing is not a timeout to hold a device to."""
-    assert target_timeout(0.01) == FLOOR
-
-
-def test_a_slow_link_is_left_its_own_default() -> None:
-    assert target_timeout(3.0) is None
-    assert target_timeout(None) is None
-
-
-async def test_nothing_is_asked_until_the_link_has_been_quiet(
+async def test_the_tuner_leaves_the_timeout_alone(
     tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
 ) -> None:
+    """Asking for less would undercut any unit sharing the link."""
     inverter, tuner = tuned
-    for _ in range(CLEAN_POLLS - 1):
+    for _ in range(QUIET_POLLS):
         await _poll(inverter, tuner)
+    tuner.observe(_timed_out())
+    tuner.observe_failure(ModbusTimeoutError("asleep"))
 
-    assert tuner.tuning.timeout is None
     assert mock_modbus_unit.required_timeout is None
-
-
-async def test_a_quiet_link_is_asked_for_what_it_measured(
-    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
-) -> None:
-    inverter, tuner = tuned
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-
-    assert tuner.tuning.timeout == FLOOR  # the mock answers instantly
-    assert mock_modbus_unit.required_timeout == FLOOR
-
-
-async def test_a_timeout_hands_the_link_back_its_own(
-    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
-) -> None:
-    inverter, tuner = tuned
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-    tuner.observe(_timed_out())
-
-    assert tuner.tuning == LinkTuning(timeout=None, withdrawals=1)
-    assert mock_modbus_unit.required_timeout is None
-
-
-async def test_a_withdrawal_makes_the_next_attempt_wait_longer(
-    tuned: tuple[SofarInverter, LinkTuner],
-) -> None:
-    inverter, tuner = tuned
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-    tuner.observe(_timed_out())
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-
-    assert tuner.tuning.timeout is None  # five clean polls no longer earn it
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-    assert tuner.tuning.timeout == FLOOR
-
-
-async def test_a_timeout_the_tuner_did_not_cause_is_not_its_own(
-    tuned: tuple[SofarInverter, LinkTuner],
-) -> None:
-    """Nothing was asked, so the device timing out says nothing about us."""
-    inverter, tuner = tuned
-    tuner.observe(_timed_out())
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-
-    assert tuner.tuning == LinkTuning(timeout=FLOOR, withdrawals=0)
-
-
-async def test_a_refused_register_is_not_a_slow_link(
-    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
-) -> None:
-    """An inverter answering "no such register" answered, and quickly."""
-    inverter, tuner = tuned
-    for _ in range(CLEAN_POLLS - 1):
-        await _poll(inverter, tuner)
-    tuner.observe(UpdateReport({"grid"}, {"eps": IllegalDataAddressError()}))
-
-    assert mock_modbus_unit.required_timeout == FLOOR
+    assert (tuner.tuning.timeout, tuner.tuning.withdrawals) == (None, 0)
 
 
 def _desynced() -> UpdateReport:
@@ -440,78 +362,11 @@ async def test_what_a_run_settled_on_comes_back(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     timed = TimedUnit(mock_modbus_unit)
-    settled = LinkTuning(timeout=1.4, spacing=0.05, connect_delay=0.5, withdrawals=2)
+    settled = LinkTuning(spacing=0.05, connect_delay=0.5)
     LinkTuner(timed).restore(settled)
 
-    assert mock_modbus_unit.required_timeout == 1.4
     assert mock_modbus_unit.message_spacing == 0.05
     assert mock_modbus_unit.required_connect_delay == 0.5
-
-
-async def test_a_restored_run_keeps_the_patience_it_paid_for(
-    mock_modbus_unit: MockModbusUnit,
-) -> None:
-    """Or every restart asks a marginal link the same question again."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
-    timed = TimedUnit(mock_modbus_unit)
-    inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
-    tuner = LinkTuner(timed)
-    tuner.restore(LinkTuning(withdrawals=2))
-
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-    assert tuner.tuning.timeout is None
-
-    for _ in range(CLEAN_POLLS * 3):
-        await _poll(inverter, tuner)
-    assert tuner.tuning.timeout == FLOOR
-
-
-async def test_a_poll_that_raised_a_timeout_hands_the_link_back_its_own(
-    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
-) -> None:
-    """A link degrading past the ask times out before it names a component."""
-    inverter, tuner = tuned
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-    assert mock_modbus_unit.required_timeout == FLOOR
-
-    mock_modbus_unit.fail_requests(ModbusTimeoutError("link degraded"))
-    with pytest.raises(ModbusTimeoutError) as raised:
-        await inverter.async_update_readings()
-    tuner.observe_failure(raised.value)
-
-    assert tuner.tuning == LinkTuning(withdrawals=1)
-    assert mock_modbus_unit.required_timeout is None
-
-
-async def test_a_raised_timeout_buys_the_same_patience_a_reported_one_does(
-    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
-) -> None:
-    inverter, tuner = tuned
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-    tuner.observe_failure(ModbusTimeoutError("link degraded"))
-
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-    assert tuner.tuning.timeout is None  # five clean polls no longer earn it
-
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-    assert tuner.tuning.timeout == FLOOR
-
-
-async def test_a_dead_link_is_not_evidence_the_ask_was_too_tight(
-    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
-) -> None:
-    inverter, tuner = tuned
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-    tuner.observe_failure(ModbusConnectionError("link down"))
-
-    assert tuner.tuning == LinkTuning(timeout=FLOOR)
-    assert mock_modbus_unit.required_timeout == FLOOR
 
 
 async def test_a_raised_poll_still_feeds_the_connect_delay_ladder(
@@ -552,36 +407,6 @@ async def test_a_raised_poll_is_not_a_quiet_one(
 
 def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.name == "sofar_modbus.tuning"]
-
-
-async def test_an_ask_and_its_withdrawal_are_logged_with_their_reason(
-    tuned: tuple[SofarInverter, LinkTuner], caplog: pytest.LogCaptureFixture
-) -> None:
-    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
-    inverter, tuner = tuned
-    for _ in range(CLEAN_POLLS):
-        await _poll(inverter, tuner)
-    tuner.observe(_timed_out())
-
-    asked, withdrawn = _logged(caplog)
-    assert re.fullmatch(
-        r"Asking for a 0\.5 s timeout: the slowest of \d+ answers took \d\.\d{3} s",
-        asked,
-    )
-    assert withdrawn == (
-        "Withdrawing the 0.5 s timeout after a request timed out; "
-        "asking again takes 10 clean polls"
-    )
-
-
-async def test_a_timeout_nothing_was_asked_for_logs_nothing(
-    tuned: tuple[SofarInverter, LinkTuner], caplog: pytest.LogCaptureFixture
-) -> None:
-    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
-    _, tuner = tuned
-    tuner.observe(_timed_out())
-
-    assert _logged(caplog) == []
 
 
 @pytest.mark.parametrize(
@@ -688,10 +513,10 @@ def test_a_restore_is_logged(
     mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
-    settled = LinkTuning(timeout=1.4, spacing=0.05, connect_delay=0.5, withdrawals=2)
+    settled = LinkTuning(spacing=0.05, connect_delay=0.5)
     LinkTuner(TimedUnit(mock_modbus_unit)).restore(settled)
 
     assert _logged(caplog) == [
-        "Restoring LinkTuning(timeout=1.4, spacing=0.05, connect_delay=0.5, "
-        "withdrawals=2)"
+        "Restoring LinkTuning(spacing=0.05, connect_delay=0.5, timeout=None, "
+        "withdrawals=0)"
     ]
