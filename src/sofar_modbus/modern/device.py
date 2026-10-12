@@ -272,6 +272,8 @@ class SofarInverter(Device):
             unit, serial_number=serial_number, read_pm=read_pm, timeout=timeout
         )
         device.identity = identity
+        if not device.inverter_type & ~PM:
+            await device._async_detect_type()
         return device
 
     @property

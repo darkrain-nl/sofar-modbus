@@ -34,8 +34,9 @@ touched: an inverter without batteries never sees a battery register. A caller
 that already knows the serial number passes it to the constructor instead,
 which reads nothing.
 
-A serial matching none of the prefixes above leaves the type empty until
-setup, which then takes it from the inverter's own address masks (see below):
+A serial matching none of the prefixes above takes its type from the
+inverter's own address masks (see below), during `async_detect()` or, for a
+device built from its serial, during setup:
 phase count from the grid block, PV or hybrid from the battery block, the MPPT
 tier from the highest PV string served, and a BTS tower from the tower's mask.
 This is derived from Sofar's register map, not checked against every model, so
