@@ -489,7 +489,9 @@ class SofarInverter(Device):
             else:
                 report.updated.add(name)
 
-    async def async_read_raw(self, names: Iterable[str] | None = None) -> Raw:
+    async def async_read_raw(
+        self, names: Iterable[str] | None = None, *, redact_serial: bool = False
+    ) -> Raw:
         """Every register this inverter reads, undecoded, for diagnostics.
 
         ``battery_pack`` is excluded: no way to say which pack it is.
@@ -497,7 +499,12 @@ class SofarInverter(Device):
         await self.async_ensure_setup()
         if names is None:
             names = ("identity", "rating", *self._readings, *self._settings)
-        return await super().async_read_raw(names)
+        raw = await super().async_read_raw(names)
+        if redact_serial and (holding := raw.get("holding")) is not None:
+            serial = Identity.serial_number
+            for address in range(serial.address, serial.address + serial.count):
+                holding.pop(address, None)
+        return raw
 
     async def async_read_masks(self) -> dict[int, int]:
         """Each block's declared-valid register mask, keyed by block base.

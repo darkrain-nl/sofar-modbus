@@ -309,6 +309,15 @@ async def test_raw_dump_covers_every_polled_component(hybrid: SofarInverter) -> 
     assert not dumped & field_addresses(hybrid.battery_pack)
 
 
+async def test_a_raw_dump_can_leave_the_serial_number_out(
+    hybrid: SofarInverter,
+) -> None:
+    """A dump meant for a public issue must not leak the serial."""
+    holding = (await hybrid.async_read_raw(redact_serial=True))["holding"]
+    assert not set(range(0x0445, 0x044C)) & set(holding)
+    assert {0x044C, 0x044D} <= set(holding)
+
+
 async def test_legacy_raw_dump_covers_every_polled_component(
     legacy_hybrid: SofarLegacyInverter,
 ) -> None:

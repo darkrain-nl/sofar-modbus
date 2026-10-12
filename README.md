@@ -236,7 +236,8 @@ undecoded, keyed by address space and address — every block a poll covers, for
 the sub-systems this model serves. It fires no update listeners — a download is
 not a poll, though the fields it reads do refresh. The pack block is not in it:
 a dump of it would be whichever pack happened to be selected, with nothing to
-say which.
+say which. `redact_serial=True` leaves the serial number's registers out, for a
+dump that will be posted publicly.
 
 `async_read_masks()` is the other half of an issue report. Every 64-address
 block of this generation opens with a four-register mask naming which of its
