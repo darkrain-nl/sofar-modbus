@@ -349,6 +349,13 @@ class SofarInverter(Device):
             return tuple(self._readings)
         return tuple(self._components_for(_READING_COMPONENTS))
 
+    @property
+    def expected_components(self) -> frozenset[str]:
+        """Every component polled, or the type's before setup."""
+        return frozenset(self.expected_readings_components) | frozenset(
+            self.expected_settings_components
+        )
+
     def _components_for(self, names: tuple[str, ...]) -> list[str]:
         """The components among ``names`` this inverter's type applies to."""
         return [

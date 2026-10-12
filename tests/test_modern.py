@@ -164,6 +164,25 @@ async def test_expected_components_come_from_the_type_before_setup(
     assert "offgrid" in hybrid.expected_readings_components
 
 
+async def test_expected_components_cover_both_polls(
+    hybrid: SofarInverter,
+) -> None:
+    before = hybrid.expected_components
+    assert len(before) == 19
+    assert {"grid", "feed_in"} <= before
+
+    await hybrid.async_update()
+
+    assert hybrid.expected_components == frozenset(
+        hybrid.readings_components + hybrid.settings_components
+    )
+    assert hybrid.expected_components - before == {
+        "offgrid",
+        "offgrid_three_phase",
+        "eps",
+    }
+
+
 async def test_expected_components_survive_a_failed_setup(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:

@@ -177,8 +177,9 @@ await inverter.async_update_settings()  # rarely, and after a write
 `readings_components` and `settings_components` stay empty until the first
 poll settles what the inverter serves, which needs it to answer. A caller that
 has to lay out entities before then, say at night, can use
-`expected_readings_components` and `expected_settings_components`: the
-components the serial's type implies, without touching the link. Once setup
+`expected_readings_components` and `expected_settings_components`, or
+`expected_components` for both as one set: the components the serial's type
+implies, without touching the link. Once setup
 settles they return the same lists as the plain properties, so setup can still
 add the off-grid components it probed for and drop the ones a mask denies. An
 unrecognised serial expects nothing, as its type comes from the masks.
