@@ -227,9 +227,6 @@ class LinkTuning:
 
     spacing: float = 0.0
     connect_delay: float = 0.0
-    # Always None and 0: Home Assistant's diagnostics still read them.
-    timeout: float | None = None
-    withdrawals: int = 0
 
 
 class LinkTuner:

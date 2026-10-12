@@ -191,7 +191,6 @@ async def test_the_tuner_leaves_the_timeout_alone(
     tuner.observe_failure(ModbusTimeoutError("asleep"))
 
     assert mock_modbus_unit.required_timeout is None
-    assert (tuner.tuning.timeout, tuner.tuning.withdrawals) == (None, 0)
 
 
 def _desynced() -> UpdateReport:
@@ -598,7 +597,4 @@ def test_a_restore_is_logged(
     settled = LinkTuning(spacing=0.05, connect_delay=0.5)
     LinkTuner(TimedUnit(mock_modbus_unit)).restore(settled)
 
-    assert _logged(caplog) == [
-        "Restoring LinkTuning(spacing=0.05, connect_delay=0.5, timeout=None, "
-        "withdrawals=0)"
-    ]
+    assert _logged(caplog) == ["Restoring LinkTuning(spacing=0.05, connect_delay=0.5)"]
