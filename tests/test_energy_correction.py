@@ -45,5 +45,18 @@ async def test_seeding_the_high_water_mark_protects_the_first_poll(
     assert hybrid.energy.corrected("solar_generation_total") == pytest.approx(10005.0)
 
 
+async def test_a_lower_seed_does_not_lower_a_polled_mark(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A stale restored state must not undo what a poll already read."""
+    await hybrid.async_update()  # 10000.0 kWh
+    hybrid.energy.solar_generation_total_corrected.seed(9990.0)
+    mock_modbus_unit.holding[0x0686] = [0x0001, 0x869B]  # 9999.5 kWh: a torn read
+
+    await hybrid.async_update()
+
+    assert hybrid.energy.corrected("solar_generation_total") == pytest.approx(10000.0)
+
+
 def test_corrected_is_none_before_the_first_poll(hybrid: SofarInverter) -> None:
     assert hybrid.energy.corrected("solar_generation_total") is None

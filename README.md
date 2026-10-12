@@ -155,6 +155,9 @@ await inverter.async_update_readings()
 print(total.value)
 ```
 
+A seed only ever raises the mark, so a stale saved state seeded late cannot
+undo what a poll already read.
+
 ### Measurements and settings refresh separately
 
 `SofarInverter` splits its poll by what it reads:

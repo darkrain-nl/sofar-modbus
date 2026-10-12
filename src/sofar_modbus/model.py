@@ -68,8 +68,8 @@ class TornReadCorrectedComponent(SofarComponent):
         return self._corrected.get(name)
 
     def seed_high_water(self, name: str, value: float) -> None:
-        """Prime a field's high-water mark, e.g. from a restored HA state."""
-        self._high_water[name] = value
+        """Prime a field's high-water mark; a lower seed leaves it be."""
+        self._high_water[name] = max(self._high_water.get(name, value), value)
 
     def _correct_totals(self) -> None:
         """Hold each total at its high-water mark through a torn read."""
