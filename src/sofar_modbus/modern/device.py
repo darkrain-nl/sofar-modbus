@@ -13,6 +13,7 @@ from modbus_connection import (
     IllegalFunctionError,
     ModbusConnectionError,
     ModbusError,
+    ModbusTimeoutError,
 )
 from modbus_connection.model import Device, Raw
 
@@ -441,20 +442,52 @@ class SofarInverter(Device):
     async def _async_tuned_poll(
         self, *, readings: bool = False, settings: bool = False
     ) -> UpdateReport:
-        """Poll once, and tell the tuner how it went."""
+        """Poll, retrying what failed once, and tell the tuner how it went.
+
+        No retry when nothing answered, or a dead inverter costs twice.
+        """
+        report = UpdateReport()
         try:
             await self.async_ensure_setup()
-            report = await self.async_poll(
-                [
-                    *(self._readings if readings else ()),
-                    *(self._settings if settings else ()),
-                ]
-            )
+            names = [
+                *(self._readings if readings else ()),
+                *(self._settings if settings else ()),
+            ]
+            await self._async_read(names, report)
+            first = dict(report.failed)
+            if report.failed and report.updated:
+                report.failed.clear()
+                await self._async_read(first, report)
         except ModbusError as err:
             self._tuner.observe_failure(err)
             raise
-        self._tuner.observe(report)
+        self._tuner.observe(
+            UpdateReport(set(report.updated), _both_attempts(first, report.failed))
+        )
+        # Listeners fire once both attempts are in, so they see one poll.
+        for name in names:
+            if name in report.updated:
+                getattr(self, name).notify()
         return report
+
+    async def _async_read(self, names: Iterable[str], report: UpdateReport) -> None:
+        """Read each named component into ``report``, notifying none.
+
+        Raises like ``async_poll``: a dead link, or a timeout first up.
+        """
+        for name in names:
+            try:
+                await getattr(self, name).async_update(notify=False)
+            except ModbusConnectionError:
+                raise
+            except ModbusTimeoutError as err:
+                if not report.updated and not report.failed:
+                    raise
+                report.failed[name] = err
+            except ModbusError as err:
+                report.failed[name] = err
+            else:
+                report.updated.add(name)
 
     async def async_read_raw(self, names: Iterable[str] | None = None) -> Raw:
         """Every register this inverter reads, undecoded, for diagnostics.
@@ -549,3 +582,14 @@ class SofarInverter(Device):
     async def async_start_iv_curve_scan(self) -> None:
         """Ask the inverter to sweep its PV strings' I-V curves."""
         await self.modbus_unit.write_register(_IV_CURVE_SCAN_REGISTER, 1)
+
+
+def _both_attempts(
+    first: Mapping[str, ModbusError], retried: Mapping[str, ModbusError]
+) -> dict[str, ModbusError]:
+    """Both attempts' failures, a timeout outranking any other error."""
+    failures = dict(first)
+    for name, err in retried.items():
+        if not isinstance(failures.get(name), ModbusTimeoutError):
+            failures[name] = err
+    return failures

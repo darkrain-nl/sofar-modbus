@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
+from unittest.mock import patch
 
 import pytest
 from modbus_connection import (
     ModbusConnectionError,
     ModbusDesyncError,
+    ModbusError,
     ModbusTimeoutError,
     ModbusUnit,
     ServerDeviceBusyError,
@@ -29,7 +31,7 @@ from sofar_modbus.tuning import (
     TimedUnit,
 )
 
-from .conftest import HYBRID_SERIAL, MODERN_HOLDING
+from .conftest import HYBRID_SERIAL, MODERN_HOLDING, fail_then
 
 Inverter = type[SofarInverter] | type[SofarLegacyInverter]
 
@@ -211,6 +213,59 @@ async def test_a_desynced_poll_widens_the_gap_by_itself(
 
     assert inverter.link_tuning.spacing == SPACING_STEPS[0]
     assert mock_modbus_unit.message_spacing == SPACING_STEPS[0]
+
+
+SLOW = ModbusTimeoutError("slow")
+BUSY = ServerDeviceBusyError()
+
+
+@pytest.mark.parametrize(
+    ("first", "retry", "heard"),
+    [
+        pytest.param(SLOW, BUSY, SLOW, id="timeout_then_busy"),
+        pytest.param(BUSY, SLOW, SLOW, id="busy_then_timeout"),
+        pytest.param(SLOW, None, SLOW, id="the_retry_recovered"),
+        pytest.param(BUSY, None, BUSY, id="busy_then_recovered"),
+    ],
+)
+async def test_the_tuner_hears_a_timeout_either_attempt_hit(
+    tuned: tuple[SofarInverter, LinkTuner],
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+    first: ModbusError,
+    retry: ModbusError | None,
+    heard: ModbusError,
+) -> None:
+    """A timeout healed by the retry still says the line is struggling."""
+    inverter, tuner = tuned
+    await inverter.async_update()
+    fail_then(monkeypatch, mock_modbus_unit, 0x0484, first, retry)
+
+    with patch.object(tuner, "observe") as observe:
+        await inverter.async_update_readings()
+
+    observe.assert_called_once()
+    heard_report = observe.call_args.args[0]
+    assert {name: type(err) for name, err in heard_report.failed.items()} == {
+        "grid": type(heard)
+    }
+    assert "state" in heard_report.updated
+
+
+async def test_only_the_retry_timing_out_reaches_the_tuner(
+    tuned: tuple[SofarInverter, LinkTuner],
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inverter, tuner = tuned
+    await inverter.async_update()
+    fail_then(monkeypatch, mock_modbus_unit, 0x0484, BUSY, SLOW)
+
+    with patch.object(tuner, "observe") as observe:
+        report = await inverter.async_update_readings()
+
+    assert report.failed == {"grid": SLOW}
+    assert observe.call_args.args[0].failed == {"grid": SLOW}
 
 
 async def test_a_desync_widens_the_gap_on_the_spot(

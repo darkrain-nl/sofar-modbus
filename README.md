@@ -86,7 +86,12 @@ previous values, does not notify its listeners, and is listed by attribute
 name with its error, while every other component refreshes and notifies once
 the whole poll is done. A dead link (`ModbusConnectionError`) raises, and so
 does a timeout before any component has answered — an inverter that is simply
-not responding is not walked block by block, paying a timeout for each:
+not responding is not walked block by block, paying a timeout for each.
+
+`SofarInverter` reads a failed component once more within the same poll, as
+long as another one answered, so a single dropped frame does not cost a value.
+Its report lists only what failed both times, and listeners fire once both
+attempts are in:
 
 ```python
 report = await inverter.async_update()
