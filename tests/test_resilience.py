@@ -7,12 +7,15 @@ from modbus_connection import (
     IllegalDataAddressError,
     ModbusConnectionError,
     ModbusTimeoutError,
+    ServerDeviceBusyError,
 )
 from modbus_connection.mock import MockModbusUnit
 
 from sofar_modbus import SofarInverter, SofarLegacyInverter
 
-from .conftest import HYBRID_SERIAL, MODERN_HOLDING
+from .conftest import HYBRID_SERIAL, MODERN_HOLDING, fail_then
+
+GRID_REGISTER = 0x0484
 
 
 async def test_a_failed_component_leaves_the_rest_fresh(
@@ -160,3 +163,85 @@ async def test_the_same_timeout_inside_a_full_update_is_contained(
 
     assert set(report.failed) == {"rtc_sync"}
     assert "state" in report.updated
+
+
+async def test_a_component_failing_once_is_read_again_in_the_same_poll(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A value only changes here if the retry actually read it."""
+    await hybrid.async_update()
+    mock_modbus_unit.holding[0x0485] = 4321
+    fail_then(
+        monkeypatch, mock_modbus_unit, GRID_REGISTER, ServerDeviceBusyError(), None
+    )
+    report = await hybrid.async_update_readings()
+
+    assert report.failed == {}
+    assert "grid" in report.updated
+    assert hybrid.grid.active_power_output_total == 43.21
+
+
+async def test_only_a_component_failing_both_attempts_is_reported(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    await hybrid.async_update()
+    mock_modbus_unit.fail_read(GRID_REGISTER, ServerDeviceBusyError())
+    mock_modbus_unit.read_events.clear()
+    report = await hybrid.async_update_readings()
+
+    assert set(report.failed) == {"grid"}
+    grid_reads = [e for e in mock_modbus_unit.read_events if e.address == 0x0484]
+    assert len(grid_reads) == 2
+
+
+async def test_the_link_dying_on_the_retry_fails_the_poll(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await hybrid.async_update()
+    fail_then(
+        monkeypatch,
+        mock_modbus_unit,
+        0x0688,  # meter_energy
+        ServerDeviceBusyError(),
+        ModbusConnectionError("link dropped"),
+    )
+    with pytest.raises(ModbusConnectionError):
+        await hybrid.async_update_readings()
+
+
+async def test_a_poll_nothing_answered_is_not_retried(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A retry would only double what a dead inverter costs."""
+    await hybrid.async_update()
+    mock_modbus_unit.fail_requests(IllegalDataAddressError())
+    mock_modbus_unit.read_events.clear()
+    report = await hybrid.async_update_readings()
+
+    assert not report.updated
+    assert set(report.failed) == set(hybrid.readings_components)
+    assert len(mock_modbus_unit.read_events) == len(hybrid.readings_components)
+
+
+async def test_a_retried_component_notifies_once_after_the_retry(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await hybrid.async_update()
+    seen: list[str] = []
+    hybrid.grid.add_update_listener(lambda: seen.append("grid"))
+    hybrid.energy.add_update_listener(
+        lambda: seen.append(f"energy after {len(mock_modbus_unit.read_events)}")
+    )
+    fail_then(
+        monkeypatch, mock_modbus_unit, GRID_REGISTER, ServerDeviceBusyError(), None
+    )
+    mock_modbus_unit.read_events.clear()
+    await hybrid.async_update_readings()
+
+    assert seen == ["grid", f"energy after {len(mock_modbus_unit.read_events)}"]

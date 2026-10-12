@@ -219,6 +219,8 @@ class PassiveMode(SofarComponent):
         self, timeout: int, action: PassiveModeTimeoutAction
     ) -> None:
         """Set how long a passive-mode command holds, and what happens after."""
+        if not 0 <= timeout <= 0xFFFF:
+            raise ValueError(f"passive-mode timeout {timeout} is outside 0-65535")
         await self._unit.write_registers(0x1184, [timeout, int(action)])
 
     async def async_write_power(

@@ -13,10 +13,12 @@ from modbus_connection import (
     IllegalFunctionError,
     ModbusConnectionError,
     ModbusError,
+    ModbusTimeoutError,
 )
 from modbus_connection.model import Device, Raw
 
 from ..model import UpdateReport
+from ..tuning import LinkStats, LinkTuner, LinkTuning, TimedUnit
 from ..variants import (
     BAT_BTS,
     EPS,
@@ -78,7 +80,9 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 _SET_TIME_REGISTER = 0x1004
+_SET_TIME_APPLIES_TO = PV | HYBRID
 _IV_CURVE_SCAN_REGISTER = 0x1027
+_IV_CURVE_SCAN_APPLIES_TO = HYBRID
 
 # Keys are the valid numbers; values name the component polling each.
 PV_STRING_COMPONENTS: Final[Mapping[int, str]] = MappingProxyType(
@@ -189,8 +193,11 @@ class SofarInverter(Device):
 
         ``read_pm`` reads parallel-system registers an inverter refuses.
         """
-        super().__init__(unit)
-        unit.require_timeout(timeout)
+        link = TimedUnit(unit)
+        super().__init__(link)
+        link.require_timeout(timeout)
+        self._link = link
+        self._tuner = LinkTuner(link)
         detected, detected_model = identify(serial_number)
         if inverter_type is None:
             if detected:
@@ -207,38 +214,38 @@ class SofarInverter(Device):
         self.model = model if model is not None else detected_model
         self.inverter_type = inverter_type | (PM if read_pm else InverterType(0))
 
-        self.state = InverterState(unit)
-        self.rating = InverterRating(unit)
-        self.identity = Identity(unit)
-        self.grid = GridOutput(unit)
-        self.offgrid = OffGridTotals(unit)
-        self.offgrid_single_phase = OffGridSinglePhase(unit)
-        self.offgrid_three_phase = OffGridThreePhase(unit)
-        self.pv_1_2 = PvStrings1To2(unit)
-        self.pv_3 = PvString3(unit)
-        self.pv_4 = PvString4(unit)
-        self.pv_5_6 = PvStrings5To6(unit)
-        self.pv_7_8 = PvStrings7To8(unit)
-        self.pv_9_10 = PvStrings9To10(unit)
-        self.battery_1_2 = BatteryStrings1To2(unit)
-        self.battery_3_8 = BatteryStrings3To8(unit)
-        self.battery_totals = BatteryTotals(unit)
-        self.energy = EnergyTotals(unit)
-        self.meter_energy = MeterEnergy(unit)
-        self.battery_energy = BatteryEnergy(unit)
-        self.rtc_sync = RtcSyncResult(unit)
-        self.feed_in = FeedInLimit(unit)
-        self.eps = EpsControl(unit)
-        self.battery_active_control = BatteryActiveControl(unit)
-        self.parallel = ParallelControl(unit)
-        self.battery_config_id = BatteryConfigId(unit)
-        self.battery_config = BatteryConfig(unit)
-        self.remote = RemoteControl(unit)
-        self.active_power_control = ActivePowerControl(unit)
-        self.charger = ChargerMode(unit)
-        self.passive = PassiveMode(unit)
+        self.state = InverterState(link)
+        self.rating = InverterRating(link)
+        self.identity = Identity(link)
+        self.grid = GridOutput(link)
+        self.offgrid = OffGridTotals(link)
+        self.offgrid_single_phase = OffGridSinglePhase(link)
+        self.offgrid_three_phase = OffGridThreePhase(link)
+        self.pv_1_2 = PvStrings1To2(link)
+        self.pv_3 = PvString3(link)
+        self.pv_4 = PvString4(link)
+        self.pv_5_6 = PvStrings5To6(link)
+        self.pv_7_8 = PvStrings7To8(link)
+        self.pv_9_10 = PvStrings9To10(link)
+        self.battery_1_2 = BatteryStrings1To2(link)
+        self.battery_3_8 = BatteryStrings3To8(link)
+        self.battery_totals = BatteryTotals(link)
+        self.energy = EnergyTotals(link)
+        self.meter_energy = MeterEnergy(link)
+        self.battery_energy = BatteryEnergy(link)
+        self.rtc_sync = RtcSyncResult(link)
+        self.feed_in = FeedInLimit(link)
+        self.eps = EpsControl(link)
+        self.battery_active_control = BatteryActiveControl(link)
+        self.parallel = ParallelControl(link)
+        self.battery_config_id = BatteryConfigId(link)
+        self.battery_config = BatteryConfig(link)
+        self.remote = RemoteControl(link)
+        self.active_power_control = ActivePowerControl(link)
+        self.charger = ChargerMode(link)
+        self.passive = PassiveMode(link)
         # Read via async_read_pack(), one pack at a time; never in the poll.
-        self.battery_pack = BatteryPack(unit)
+        self.battery_pack = BatteryPack(link)
 
         self._pv_strings = {
             number: PvString(number, name, getattr(self, name))
@@ -272,12 +279,39 @@ class SofarInverter(Device):
             unit, serial_number=serial_number, read_pm=read_pm, timeout=timeout
         )
         device.identity = identity
+        if not device.inverter_type & ~PM:
+            await device._async_detect_type()
         return device
+
+    @property
+    def connected(self) -> bool:
+        """Whether the link is open."""
+        return self._link.connected
+
+    @property
+    def link_stats(self) -> LinkStats:
+        """How this inverter's recent requests went."""
+        return self._link.stats
+
+    @property
+    def link_tuning(self) -> LinkTuning:
+        """What the tuner asks of the link."""
+        return self._tuner.tuning
 
     @property
     def has_battery_tower(self) -> bool:
         """Whether this inverter reports a BTS battery tower."""
         return BAT_BTS in self.inverter_type
+
+    @property
+    def supports_set_time(self) -> bool:
+        """Whether ``async_set_time()`` applies to this inverter."""
+        return matches(self.inverter_type, _SET_TIME_APPLIES_TO)
+
+    @property
+    def supports_iv_curve_scan(self) -> bool:
+        """Whether ``async_start_iv_curve_scan()`` applies to this inverter."""
+        return matches(self.inverter_type, _IV_CURVE_SCAN_APPLIES_TO)
 
     def pv_string(self, number: int) -> PvString:
         """PV string ``number``, a key of ``PV_STRING_COMPONENTS``."""
@@ -290,6 +324,16 @@ class SofarInverter(Device):
         if (string := self._battery_strings.get(number)) is None:
             raise ValueError(f"no battery string {number}")
         return string
+
+    @property
+    def wired_battery_strings(self) -> frozenset[int]:
+        """Numbers of the served battery strings that report a voltage."""
+        served = self.expected_components
+        return frozenset(
+            number
+            for number, string in self._battery_strings.items()
+            if string.component_name in served and string.voltage
+        )
 
     @property
     def settings_components(self) -> tuple[str, ...]:
@@ -314,6 +358,13 @@ class SofarInverter(Device):
         if self._settled:
             return tuple(self._readings)
         return tuple(self._components_for(_READING_COMPONENTS))
+
+    @property
+    def expected_components(self) -> frozenset[str]:
+        """Every component polled, or the type's before setup."""
+        return frozenset(self.expected_readings_components) | frozenset(
+            self.expected_settings_components
+        )
 
     def _components_for(self, names: tuple[str, ...]) -> list[str]:
         """The components among ``names`` this inverter's type applies to."""
@@ -401,26 +452,75 @@ class SofarInverter(Device):
 
     async def async_update_readings(self) -> UpdateReport:
         """Refresh telemetry measurements (power, energy, battery, state)."""
-        await self.async_ensure_setup()
-        return await self.async_poll(self._readings)
+        return await self._async_tuned_poll(readings=True)
 
     async def async_update_settings(self) -> UpdateReport:
         """Refresh configuration registers (charger mode, limits, battery config).
 
         Split from telemetry: configuration only changes when written.
         """
-        await self.async_ensure_setup()
-        return await self.async_poll(self._settings)
+        return await self._async_tuned_poll(settings=True)
 
     async def async_update(self) -> UpdateReport:
         """Refresh readings and settings together in one report.
 
         One poll, so listeners see both halves at once.
         """
-        await self.async_ensure_setup()
-        return await self.async_poll([*self._readings, *self._settings])
+        return await self._async_tuned_poll(readings=True, settings=True)
 
-    async def async_read_raw(self, names: Iterable[str] | None = None) -> Raw:
+    async def _async_tuned_poll(
+        self, *, readings: bool = False, settings: bool = False
+    ) -> UpdateReport:
+        """Poll, retrying what failed once, and tell the tuner how it went.
+
+        No retry when nothing answered, or a dead inverter costs twice.
+        """
+        report = UpdateReport()
+        try:
+            await self.async_ensure_setup()
+            names = [
+                *(self._readings if readings else ()),
+                *(self._settings if settings else ()),
+            ]
+            await self._async_read(names, report)
+            first = dict(report.failed)
+            if report.failed and report.updated:
+                report.failed.clear()
+                await self._async_read(first, report)
+        except ModbusError as err:
+            self._tuner.observe_failure(err)
+            raise
+        self._tuner.observe(
+            UpdateReport(set(report.updated), _both_attempts(first, report.failed))
+        )
+        # Listeners fire once both attempts are in, so they see one poll.
+        for name in names:
+            if name in report.updated:
+                getattr(self, name).notify()
+        return report
+
+    async def _async_read(self, names: Iterable[str], report: UpdateReport) -> None:
+        """Read each named component into ``report``, notifying none.
+
+        Raises like ``async_poll``: a dead link, or a timeout first up.
+        """
+        for name in names:
+            try:
+                await getattr(self, name).async_update(notify=False)
+            except ModbusConnectionError:
+                raise
+            except ModbusTimeoutError as err:
+                if not report.updated and not report.failed:
+                    raise
+                report.failed[name] = err
+            except ModbusError as err:
+                report.failed[name] = err
+            else:
+                report.updated.add(name)
+
+    async def async_read_raw(
+        self, names: Iterable[str] | None = None, *, redact_serial: bool = False
+    ) -> Raw:
         """Every register this inverter reads, undecoded, for diagnostics.
 
         ``battery_pack`` is excluded: no way to say which pack it is.
@@ -428,7 +528,12 @@ class SofarInverter(Device):
         await self.async_ensure_setup()
         if names is None:
             names = ("identity", "rating", *self._readings, *self._settings)
-        return await super().async_read_raw(names)
+        raw = await super().async_read_raw(names)
+        if redact_serial and (holding := raw.get("holding")) is not None:
+            serial = Identity.serial_number
+            for address in range(serial.address, serial.address + serial.count):
+                holding.pop(address, None)
+        return raw
 
     async def async_read_masks(self) -> dict[int, int]:
         """Each block's declared-valid register mask, keyed by block base.
@@ -513,3 +618,14 @@ class SofarInverter(Device):
     async def async_start_iv_curve_scan(self) -> None:
         """Ask the inverter to sweep its PV strings' I-V curves."""
         await self.modbus_unit.write_register(_IV_CURVE_SCAN_REGISTER, 1)
+
+
+def _both_attempts(
+    first: Mapping[str, ModbusError], retried: Mapping[str, ModbusError]
+) -> dict[str, ModbusError]:
+    """Both attempts' failures, a timeout outranking any other error."""
+    failures = dict(first)
+    for name, err in retried.items():
+        if not isinstance(failures.get(name), ModbusTimeoutError):
+            failures[name] = err
+    return failures

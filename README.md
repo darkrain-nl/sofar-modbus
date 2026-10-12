@@ -34,8 +34,9 @@ touched: an inverter without batteries never sees a battery register. A caller
 that already knows the serial number passes it to the constructor instead,
 which reads nothing.
 
-A serial matching none of the prefixes above leaves the type empty until
-setup, which then takes it from the inverter's own address masks (see below):
+A serial matching none of the prefixes above takes its type from the
+inverter's own address masks (see below), during `async_detect()` or, for a
+device built from its serial, during setup:
 phase count from the grid block, PV or hybrid from the battery block, the MPPT
 tier from the highest PV string served, and a BTS tower from the tower's mask.
 This is derived from Sofar's register map, not checked against every model, so
@@ -85,7 +86,12 @@ previous values, does not notify its listeners, and is listed by attribute
 name with its error, while every other component refreshes and notifies once
 the whole poll is done. A dead link (`ModbusConnectionError`) raises, and so
 does a timeout before any component has answered — an inverter that is simply
-not responding is not walked block by block, paying a timeout for each:
+not responding is not walked block by block, paying a timeout for each.
+
+`SofarInverter` reads a failed component once more within the same poll, as
+long as another one answered, so a single dropped frame does not cost a value.
+Its report lists only what failed both times, and listeners fire once both
+attempts are in:
 
 ```python
 report = await inverter.async_update()
@@ -135,7 +141,9 @@ for number, component in PV_STRING_COMPONENTS.items():
 ```
 
 `BATTERY_STRING_COMPONENTS` and `battery_string()` do the same for battery
-strings. A number outside the mapping raises `ValueError`.
+strings. A number outside the mapping raises `ValueError`. A model serving
+eight battery strings still answers for the ones with nothing attached, so
+`wired_battery_strings` names the served ones that report a voltage.
 
 An energy counter can read back a torn value mid-update. Each one has a
 `*_corrected` handle that holds it at its high-water mark through such a read:
@@ -146,6 +154,9 @@ total.seed(restored_value)  # before the first poll, e.g. from a saved state
 await inverter.async_update_readings()
 print(total.value)
 ```
+
+A seed only ever raises the mark, so a stale saved state seeded late cannot
+undo what a poll already read.
 
 ### Measurements and settings refresh separately
 
@@ -171,8 +182,9 @@ await inverter.async_update_settings()  # rarely, and after a write
 `readings_components` and `settings_components` stay empty until the first
 poll settles what the inverter serves, which needs it to answer. A caller that
 has to lay out entities before then, say at night, can use
-`expected_readings_components` and `expected_settings_components`: the
-components the serial's type implies, without touching the link. Once setup
+`expected_readings_components` and `expected_settings_components`, or
+`expected_components` for both as one set: the components the serial's type
+implies, without touching the link. Once setup
 settles they return the same lists as the plain properties, so setup can still
 add the off-grid components it probed for and drop the ones a mask denies. An
 unrecognised serial expects nothing, as its type comes from the masks.
@@ -206,6 +218,11 @@ await inverter.active_power_control.async_write_active_power_limit(True, 70)
 from `feed_in`, which caps power exported to the grid. It applies to PV-only
 inverters as well as hybrids, and takes effect within seconds.
 
+Two commands write a register without a setting behind it: `async_set_time()`
+sets the inverter's clock, and `async_start_iv_curve_scan()` sweeps the PV
+strings. `supports_set_time` and `supports_iv_curve_scan` say whether this
+model takes them: the clock on PV and hybrid inverters, the scan on hybrids.
+
 A BTS battery tower multiplexes every pack onto one register block, so packs are
 read one at a time rather than polled:
 
@@ -230,7 +247,8 @@ undecoded, keyed by address space and address — every block a poll covers, for
 the sub-systems this model serves. It fires no update listeners — a download is
 not a poll, though the fields it reads do refresh. The pack block is not in it:
 a dump of it would be whichever pack happened to be selected, with nothing to
-say which.
+say which. `redact_serial=True` leaves the serial number's registers out, for a
+dump that will be posted publicly.
 
 `async_read_masks()` is the other half of an issue report. Every 64-address
 block of this generation opens with a four-register mask naming which of its
@@ -295,10 +313,12 @@ median 243 ms on a 4.4 KTLX-G3 over TCP, but what sits between it and you varies
 far more than the inverter does, so neither device object guesses a value. The
 connection's own default, 10 seconds, applies.
 
-Measure before choosing one. `sofar_modbus.tuning.TimedUnit` wraps a
-`ModbusUnit` and times every request that passes through it, which is where
-`query.py`'s numbers come from. Hand the wrapper to the inverter instead of the
-unit and read its `stats` for the same figures in your own application.
+Measure before choosing one. `SofarInverter` times every request it makes, and
+`inverter.link_stats` holds the latency and failures of the last 200 of them;
+`inverter.connected` says whether the link is open. For the older generation,
+`sofar_modbus.tuning.TimedUnit` wraps a `ModbusUnit` to the same effect, which
+is where `query.py`'s numbers come from: hand the wrapper to the inverter
+instead of the unit and read its `stats`.
 
 A caller who has measured their link states it with `timeout=` on either
 constructor or on `async_detect()`, which asks for it through
@@ -309,28 +329,29 @@ connect rather than on the link already open.
 
 ## Tuning the link from its own traffic
 
-`LinkTuner` paces a link from what its polls tell it. Give it the same wrapper
-the inverter reads through, and hand it each poll's report:
+`SofarInverter` paces its link from what its own polls tell it, with nothing
+for the caller to do. A poll that gives up and raises, because the link is down
+or nothing answered, counts too: its reads towards the gap's budget, and its
+opening requests towards the pause after connecting.
+
+The older generation has no tuner of its own. `LinkTuner` does the same for
+it: give it the wrapper the inverter reads through, and hand it each poll's
+outcome:
 
 ```python
 from sofar_modbus.tuning import LinkTuner, TimedUnit
 
 timed = TimedUnit(connection.for_unit(1))
-inverter = await SofarInverter.async_detect(timed)
+inverter = await SofarLegacyInverter.async_detect(timed)
 tuner = LinkTuner(timed)
 
 while True:
     try:
-        tuner.observe(await inverter.async_update_readings())
+        tuner.observe(await inverter.async_update())
     except ModbusError as err:
         tuner.observe_failure(err)
         raise
 ```
-
-Both halves matter. A poll gives up and raises rather than reporting when the
-link is down, or when it times out before anything has answered. Its reads
-still count towards the gap's budget, and its opening requests towards the
-pause after connecting.
 
 It tunes two things. The timeout is not one of them: the connection runs with
 the largest timeout any of its units asks for, and a unit that asks for nothing
@@ -352,8 +373,9 @@ moment the socket is. Two opening requests that go unanswered earn a quarter
 second, then half, then one, then two. This one is never given back: it costs a
 single wait per connect, and a device that needed it still does.
 
-`tuner.tuning` is what it asks of the link, which is worth putting in a
-diagnostics download, and worth storing:
+`inverter.link_tuning` (or `tuner.tuning`) is what it asks of the link, which
+is worth putting in a diagnostics download. A standalone tuner can also be
+stored and restored:
 
 ```python
 tuner.restore(saved)  # before the first poll

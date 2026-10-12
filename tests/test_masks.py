@@ -27,7 +27,7 @@ from sofar_modbus.variants import (
     InverterType,
 )
 
-from .conftest import HYBRID_SERIAL, MODERN_HOLDING
+from .conftest import HYBRID_SERIAL, MODERN_HOLDING, ascii_words
 
 # Captured from a 4.4 KTLX-G3; pins the register order against hardware.
 GRID_OUTPUT_MASK = [0x1C00, 0x8218, 0x4308, 0x617F]
@@ -455,6 +455,31 @@ async def test_a_sleeping_inverter_is_detected_once_it_wakes(
     mock_modbus_unit.fail_requests(None)
     await device.async_update()
     assert device.inverter_type == GEN | X3 | PV
+
+
+async def test_detection_takes_an_unknown_serial_type_from_the_masks(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A caller vetting an unknown serial gets the type before setup."""
+    unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    mock_modbus_unit.holding[0x0445] = ascii_words(UNKNOWN_SERIAL, 7)
+    device = await SofarInverter.async_detect(mock_modbus_unit, read_pm=True)
+    assert device.inverter_type == GEN | X3 | PV | PM
+    assert device.expected_readings_components == (
+        "state",
+        "grid",
+        "pv_1_2",
+        "energy",
+        "meter_energy",
+    )
+
+
+async def test_detection_with_a_known_serial_reads_no_mask(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    await SofarInverter.async_detect(mock_modbus_unit)
+    assert not any(event.address & 0x3F == 0 for event in mock_modbus_unit.read_events)
 
 
 async def test_the_type_can_be_detected_without_a_device(

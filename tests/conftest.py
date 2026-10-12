@@ -33,6 +33,28 @@ def packed_timestamp(
     return [(raw >> 16) & 0xFFFF, raw & 0xFFFF]
 
 
+def fail_then(
+    monkeypatch: pytest.MonkeyPatch,
+    unit: MockModbusUnit,
+    address: int,
+    first: Exception,
+    then: Exception | None,
+) -> None:
+    """Fail a read of ``address`` with ``first``, and later ones with ``then``."""
+    unit.fail_read(address, first)
+    read = unit.read_holding_registers
+
+    async def read_then(address_: int, count: int) -> list[int]:
+        try:
+            return await read(address_, count)
+        except Exception as err:
+            if err is first:
+                unit.fail_read(address, then)
+            raise
+
+    monkeypatch.setattr(unit, "read_holding_registers", read_then)
+
+
 # A three-phase HYD hybrid: selects HYBRID | X3 | GEN | BAT_BTS.
 HYBRID_SERIAL = "SP1ES12345678"
 

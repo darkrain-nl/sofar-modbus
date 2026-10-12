@@ -164,6 +164,25 @@ async def test_expected_components_come_from_the_type_before_setup(
     assert "offgrid" in hybrid.expected_readings_components
 
 
+async def test_expected_components_cover_both_polls(
+    hybrid: SofarInverter,
+) -> None:
+    before = hybrid.expected_components
+    assert len(before) == 19
+    assert {"grid", "feed_in"} <= before
+
+    await hybrid.async_update()
+
+    assert hybrid.expected_components == frozenset(
+        hybrid.readings_components + hybrid.settings_components
+    )
+    assert hybrid.expected_components - before == {
+        "offgrid",
+        "offgrid_three_phase",
+        "eps",
+    }
+
+
 async def test_expected_components_survive_a_failed_setup(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
@@ -412,6 +431,28 @@ async def test_battery_strings_and_totals(hybrid: SofarInverter) -> None:
     assert hybrid.battery_totals.current_battery_num == 2
 
 
+async def test_a_battery_string_is_wired_once_it_reports_a_voltage(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    assert hybrid.wired_battery_strings == frozenset()
+
+    mock_modbus_unit.holding[0x060B] = 0  # string 2 reports no voltage
+    await hybrid.async_update_readings()
+
+    assert hybrid.wired_battery_strings == {1, 3}
+
+
+async def test_a_battery_string_the_model_does_not_serve_is_not_wired(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A PV inverter's battery registers mean nothing, whatever they hold."""
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    inverter = SofarInverter(mock_modbus_unit, serial_number="SS2E000001")
+    await inverter.battery_1_2.async_update()
+    assert inverter.battery_string(1).voltage
+    assert inverter.wired_battery_strings == frozenset()
+
+
 async def test_energy_counters(hybrid: SofarInverter) -> None:
     await hybrid.async_update()
     assert hybrid.energy.solar_generation_today == pytest.approx(12.34)  # uint32
@@ -531,6 +572,28 @@ async def test_passive_mode_writes(
     ]
 
 
+@pytest.mark.parametrize("timeout", [-1, 65536])
+async def test_a_passive_timeout_must_fit_its_register(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit, timeout: int
+) -> None:
+    events: list[WriteEvent] = []
+    mock_modbus_unit.on_write(events.append)
+    with pytest.raises(ValueError, match="outside 0-65535"):
+        await hybrid.passive.async_write_timeout(
+            timeout, PassiveModeTimeoutAction.FORCE_STANDBY
+        )
+    assert not events
+
+
+async def test_the_longest_passive_timeout_is_written(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    await hybrid.passive.async_write_timeout(
+        65535, PassiveModeTimeoutAction.FORCE_STANDBY
+    )
+    assert await mock_modbus_unit.read_holding_registers(0x1184, 1) == [65535]
+
+
 async def test_set_time_writes_seven_registers(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
@@ -541,6 +604,26 @@ async def test_set_time_writes_seven_registers(
     assert [(e.address, e.values) for e in events] == [
         (0x1004, [25, 8, 12, 14, 30, 5, 1])
     ]
+
+
+@pytest.mark.parametrize(
+    ("serial", "set_time", "iv_curve_scan"),
+    [
+        pytest.param(HYBRID_SERIAL, True, True, id="hybrid"),
+        # A 4.4 KTLX-G3 acknowledges the seven-register clock write.
+        pytest.param("SS2E000001", True, False, id="pv"),
+        pytest.param("NOPE000000001", False, False, id="unknown"),
+    ],
+)
+def test_which_commands_an_inverter_supports(
+    mock_modbus_unit: MockModbusUnit,
+    serial: str,
+    set_time: bool,
+    iv_curve_scan: bool,
+) -> None:
+    inverter = SofarInverter(mock_modbus_unit, serial_number=serial)
+    assert inverter.supports_set_time is set_time
+    assert inverter.supports_iv_curve_scan is iv_curve_scan
 
 
 async def test_iv_curve_scan(
