@@ -431,6 +431,28 @@ async def test_battery_strings_and_totals(hybrid: SofarInverter) -> None:
     assert hybrid.battery_totals.current_battery_num == 2
 
 
+async def test_a_battery_string_is_wired_once_it_reports_a_voltage(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    assert hybrid.wired_battery_strings == frozenset()
+
+    mock_modbus_unit.holding[0x060B] = 0  # string 2 reports no voltage
+    await hybrid.async_update_readings()
+
+    assert hybrid.wired_battery_strings == {1, 3}
+
+
+async def test_a_battery_string_the_model_does_not_serve_is_not_wired(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A PV inverter's battery registers mean nothing, whatever they hold."""
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    inverter = SofarInverter(mock_modbus_unit, serial_number="SS2E000001")
+    await inverter.battery_1_2.async_update()
+    assert inverter.battery_string(1).voltage
+    assert inverter.wired_battery_strings == frozenset()
+
+
 async def test_energy_counters(hybrid: SofarInverter) -> None:
     await hybrid.async_update()
     assert hybrid.energy.solar_generation_today == pytest.approx(12.34)  # uint32

@@ -141,7 +141,9 @@ for number, component in PV_STRING_COMPONENTS.items():
 ```
 
 `BATTERY_STRING_COMPONENTS` and `battery_string()` do the same for battery
-strings. A number outside the mapping raises `ValueError`.
+strings. A number outside the mapping raises `ValueError`. A model serving
+eight battery strings still answers for the ones with nothing attached, so
+`wired_battery_strings` names the served ones that report a voltage.
 
 An energy counter can read back a torn value mid-update. Each one has a
 `*_corrected` handle that holds it at its high-water mark through such a read:

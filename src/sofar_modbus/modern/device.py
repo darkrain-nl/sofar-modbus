@@ -326,6 +326,16 @@ class SofarInverter(Device):
         return string
 
     @property
+    def wired_battery_strings(self) -> frozenset[int]:
+        """Numbers of the served battery strings that report a voltage."""
+        served = self.expected_components
+        return frozenset(
+            number
+            for number, string in self._battery_strings.items()
+            if string.component_name in served and string.voltage
+        )
+
+    @property
     def settings_components(self) -> tuple[str, ...]:
         """Settings component names this inverter polls; empty before setup."""
         return tuple(self._settings)
