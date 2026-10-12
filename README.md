@@ -212,6 +212,11 @@ await inverter.active_power_control.async_write_active_power_limit(True, 70)
 from `feed_in`, which caps power exported to the grid. It applies to PV-only
 inverters as well as hybrids, and takes effect within seconds.
 
+Two commands write a register without a setting behind it: `async_set_time()`
+sets the inverter's clock, and `async_start_iv_curve_scan()` sweeps the PV
+strings. `supports_set_time` and `supports_iv_curve_scan` say whether this
+model takes them: the clock on PV and hybrid inverters, the scan on hybrids.
+
 A BTS battery tower multiplexes every pack onto one register block, so packs are
 read one at a time rather than polled:
 

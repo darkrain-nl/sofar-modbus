@@ -543,6 +543,26 @@ async def test_set_time_writes_seven_registers(
     ]
 
 
+@pytest.mark.parametrize(
+    ("serial", "set_time", "iv_curve_scan"),
+    [
+        pytest.param(HYBRID_SERIAL, True, True, id="hybrid"),
+        # A 4.4 KTLX-G3 acknowledges the seven-register clock write.
+        pytest.param("SS2E000001", True, False, id="pv"),
+        pytest.param("NOPE000000001", False, False, id="unknown"),
+    ],
+)
+def test_which_commands_an_inverter_supports(
+    mock_modbus_unit: MockModbusUnit,
+    serial: str,
+    set_time: bool,
+    iv_curve_scan: bool,
+) -> None:
+    inverter = SofarInverter(mock_modbus_unit, serial_number=serial)
+    assert inverter.supports_set_time is set_time
+    assert inverter.supports_iv_curve_scan is iv_curve_scan
+
+
 async def test_iv_curve_scan(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:

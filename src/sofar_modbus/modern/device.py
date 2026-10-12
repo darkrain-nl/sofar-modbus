@@ -80,7 +80,9 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 _SET_TIME_REGISTER = 0x1004
+_SET_TIME_APPLIES_TO = PV | HYBRID
 _IV_CURVE_SCAN_REGISTER = 0x1027
+_IV_CURVE_SCAN_APPLIES_TO = HYBRID
 
 # Keys are the valid numbers; values name the component polling each.
 PV_STRING_COMPONENTS: Final[Mapping[int, str]] = MappingProxyType(
@@ -300,6 +302,16 @@ class SofarInverter(Device):
     def has_battery_tower(self) -> bool:
         """Whether this inverter reports a BTS battery tower."""
         return BAT_BTS in self.inverter_type
+
+    @property
+    def supports_set_time(self) -> bool:
+        """Whether ``async_set_time()`` applies to this inverter."""
+        return matches(self.inverter_type, _SET_TIME_APPLIES_TO)
+
+    @property
+    def supports_iv_curve_scan(self) -> bool:
+        """Whether ``async_start_iv_curve_scan()`` applies to this inverter."""
+        return matches(self.inverter_type, _IV_CURVE_SCAN_APPLIES_TO)
 
     def pv_string(self, number: int) -> PvString:
         """PV string ``number``, a key of ``PV_STRING_COMPONENTS``."""
