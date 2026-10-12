@@ -119,16 +119,36 @@ async def test_the_window_keeps_only_the_last_requests(
     assert timed.reads == 10  # the count is of the whole run, not the window
 
 
-async def test_an_inverter_polls_through_the_wrapper(
+async def test_an_inverter_times_its_own_requests(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     mock_modbus_unit.holding.update(MODERN_HOLDING)
-    timed = TimedUnit(mock_modbus_unit)
-    inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
+    inverter = SofarInverter(
+        mock_modbus_unit, serial_number=HYBRID_SERIAL, read_pm=True
+    )
     report = await inverter.async_update()
 
     assert report.complete
-    assert timed.stats.answered == timed.reads > 0
+    stats = inverter.link_stats
+    assert stats.answered == stats.requests == len(mock_modbus_unit.read_events)
+    assert stats.requests > 0
+
+
+async def test_an_inverter_reports_whether_its_link_is_open(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
+    await inverter.async_update()
+    assert inverter.connected
+
+    await mock_modbus_unit.disconnect()
+    assert not inverter.connected
+
+
+def test_an_inverter_starts_untuned(mock_modbus_unit: MockModbusUnit) -> None:
+    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
+    assert inverter.link_tuning == LinkTuning()
 
 
 def test_link_settings_reach_the_wrapped_unit(
@@ -144,23 +164,18 @@ def test_link_settings_reach_the_wrapped_unit(
     assert mock_modbus_unit.required_connect_delay == 1.0
 
 
-async def _poll(inverter: SofarInverter, tuner: LinkTuner) -> None:
-    """One clean poll, observed the way a coordinator would."""
-    tuner.observe(await inverter.async_update())
-
-
 def _timed_out() -> UpdateReport:
     return UpdateReport({"grid"}, {"state": ModbusTimeoutError("no answer")})
 
 
 @pytest.fixture
 def tuned(mock_modbus_unit: MockModbusUnit) -> tuple[SofarInverter, LinkTuner]:
-    """An inverter polling through a timed unit, with a tuner watching."""
+    """An inverter and the tuner its own polls report to."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
-    timed = TimedUnit(mock_modbus_unit)
-    return SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True), LinkTuner(
-        timed
+    inverter = SofarInverter(
+        mock_modbus_unit, serial_number=HYBRID_SERIAL, read_pm=True
     )
+    return inverter, inverter._tuner
 
 
 async def test_the_tuner_leaves_the_timeout_alone(
@@ -169,7 +184,7 @@ async def test_the_tuner_leaves_the_timeout_alone(
     """Asking for less would undercut any unit sharing the link."""
     inverter, tuner = tuned
     for _ in range(QUIET_POLLS):
-        await _poll(inverter, tuner)
+        await inverter.async_update()
     tuner.observe(_timed_out())
     tuner.observe_failure(ModbusTimeoutError("asleep"))
 
@@ -185,12 +200,25 @@ def _busy() -> UpdateReport:
     return UpdateReport({"grid"}, {"state": ServerDeviceBusyError()})
 
 
+async def test_a_desynced_poll_widens_the_gap_by_itself(
+    tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
+) -> None:
+    """No caller has to hand the inverter its own report."""
+    inverter, _ = tuned
+    await inverter.async_update()
+    mock_modbus_unit.fail_read(0x0484, ModbusDesyncError("wrong reply"))
+    await inverter.async_update_readings()
+
+    assert inverter.link_tuning.spacing == SPACING_STEPS[0]
+    assert mock_modbus_unit.message_spacing == SPACING_STEPS[0]
+
+
 async def test_a_desync_widens_the_gap_on_the_spot(
     tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
 ) -> None:
     """A reply to another exchange is the one unambiguous sign of crowding."""
     inverter, tuner = tuned
-    await _poll(inverter, tuner)
+    await inverter.async_update()
     tuner.observe(_desynced())
 
     assert tuner.tuning.spacing == SPACING_STEPS[0]
@@ -201,7 +229,7 @@ async def test_a_busy_device_has_to_say_so_more_than_once(
     tuned: tuple[SofarInverter, LinkTuner],
 ) -> None:
     inverter, tuner = tuned
-    await _poll(inverter, tuner)
+    await inverter.async_update()
     for _ in range(CROWDED_POLLS - 1):
         tuner.observe(_busy())
     assert tuner.tuning.spacing == 0.0
@@ -240,7 +268,7 @@ async def test_the_budget_caps_how_wide_a_poll_may_get(
     timed = TimedUnit(mock_modbus_unit)
     inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=1.0)
-    await _poll(inverter, tuner)
+    tuner.observe(await inverter.async_update())
 
     for _ in range(3):
         tuner.observe(_desynced())
@@ -259,7 +287,7 @@ async def test_a_wider_budget_lets_the_ladder_climb(
     timed = TimedUnit(mock_modbus_unit)
     inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=10.0)
-    await _poll(inverter, tuner)
+    tuner.observe(await inverter.async_update())
 
     for _ in range(3):
         tuner.observe(_desynced())
@@ -271,12 +299,12 @@ async def test_a_quiet_line_gets_a_step_back(
     tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
 ) -> None:
     inverter, tuner = tuned
-    await _poll(inverter, tuner)
+    await inverter.async_update()
     tuner.observe(_desynced())
     widened = tuner.tuning.spacing
 
     for _ in range(QUIET_POLLS * 2):
-        await _poll(inverter, tuner)
+        await inverter.async_update()
 
     assert widened == SPACING_STEPS[0]
     assert tuner.tuning.spacing == 0.0
@@ -288,11 +316,11 @@ async def test_widening_buys_patience_before_the_next_narrowing(
 ) -> None:
     """A line that crowded once is not asked the same question as often."""
     inverter, tuner = tuned
-    await _poll(inverter, tuner)
+    await inverter.async_update()
     tuner.observe(_desynced())
 
     for _ in range(QUIET_POLLS):
-        await _poll(inverter, tuner)
+        await inverter.async_update()
 
     assert tuner.tuning.spacing == SPACING_STEPS[0]
 
@@ -373,15 +401,14 @@ async def test_a_raised_poll_still_feeds_the_connect_delay_ladder(
     tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
 ) -> None:
     """The reads happened, so what they say about opening the link stands."""
-    inverter, tuner = tuned
+    inverter, _ = tuned
     mock_modbus_unit.fail_requests(ModbusTimeoutError("not ready yet"))
     for _ in range(FAILED_OPENS):
         await mock_modbus_unit.disconnect()
-        with pytest.raises(ModbusTimeoutError) as raised:
+        with pytest.raises(ModbusTimeoutError):
             await inverter.async_update_readings()
-        tuner.observe_failure(raised.value)
 
-    assert tuner.tuning.connect_delay == CONNECT_DELAYS[0]
+    assert inverter.link_tuning.connect_delay == CONNECT_DELAYS[0]
     assert mock_modbus_unit.required_connect_delay == CONNECT_DELAYS[0]
 
 
@@ -390,7 +417,7 @@ async def test_a_raised_poll_is_not_a_quiet_one(
 ) -> None:
     """Or a link too broken to poll would earn a narrower gap by failing."""
     inverter, tuner = tuned
-    await _poll(inverter, tuner)
+    await inverter.async_update()
     tuner.observe(_desynced())
     widened = tuner.tuning.spacing
 
@@ -424,7 +451,7 @@ async def test_widening_logs_what_crowded_the_line(
     reason: str,
 ) -> None:
     inverter, tuner = tuned
-    await _poll(inverter, tuner)
+    await inverter.async_update()
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
     for _ in range(polls):
         tuner.observe(crowding())
@@ -436,11 +463,11 @@ async def test_narrowing_is_logged(
     tuned: tuple[SofarInverter, LinkTuner], caplog: pytest.LogCaptureFixture
 ) -> None:
     inverter, tuner = tuned
-    await _poll(inverter, tuner)
+    await inverter.async_update()
     tuner.observe(_desynced())
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
     for _ in range(QUIET_POLLS * 2):
-        await _poll(inverter, tuner)
+        await inverter.async_update()
 
     narrowed = [m for m in _logged(caplog) if m.startswith("Narrowing")]
     assert narrowed == ["Narrowing the frame gap to 0.0 s after 40 quiet polls"]
@@ -454,7 +481,7 @@ async def test_a_gap_the_budget_caps_is_logged(
     timed = TimedUnit(mock_modbus_unit)
     inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=1.0)
-    await _poll(inverter, tuner)
+    tuner.observe(await inverter.async_update())
     tuner.observe(_desynced())
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
     tuner.observe(_desynced())

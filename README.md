@@ -296,10 +296,12 @@ median 243 ms on a 4.4 KTLX-G3 over TCP, but what sits between it and you varies
 far more than the inverter does, so neither device object guesses a value. The
 connection's own default, 10 seconds, applies.
 
-Measure before choosing one. `sofar_modbus.tuning.TimedUnit` wraps a
-`ModbusUnit` and times every request that passes through it, which is where
-`query.py`'s numbers come from. Hand the wrapper to the inverter instead of the
-unit and read its `stats` for the same figures in your own application.
+Measure before choosing one. `SofarInverter` times every request it makes, and
+`inverter.link_stats` holds the latency and failures of the last 200 of them;
+`inverter.connected` says whether the link is open. For the older generation,
+`sofar_modbus.tuning.TimedUnit` wraps a `ModbusUnit` to the same effect, which
+is where `query.py`'s numbers come from: hand the wrapper to the inverter
+instead of the unit and read its `stats`.
 
 A caller who has measured their link states it with `timeout=` on either
 constructor or on `async_detect()`, which asks for it through
@@ -310,28 +312,29 @@ connect rather than on the link already open.
 
 ## Tuning the link from its own traffic
 
-`LinkTuner` paces a link from what its polls tell it. Give it the same wrapper
-the inverter reads through, and hand it each poll's report:
+`SofarInverter` paces its link from what its own polls tell it, with nothing
+for the caller to do. A poll that gives up and raises, because the link is down
+or nothing answered, counts too: its reads towards the gap's budget, and its
+opening requests towards the pause after connecting.
+
+The older generation has no tuner of its own. `LinkTuner` does the same for
+it: give it the wrapper the inverter reads through, and hand it each poll's
+outcome:
 
 ```python
 from sofar_modbus.tuning import LinkTuner, TimedUnit
 
 timed = TimedUnit(connection.for_unit(1))
-inverter = await SofarInverter.async_detect(timed)
+inverter = await SofarLegacyInverter.async_detect(timed)
 tuner = LinkTuner(timed)
 
 while True:
     try:
-        tuner.observe(await inverter.async_update_readings())
+        tuner.observe(await inverter.async_update())
     except ModbusError as err:
         tuner.observe_failure(err)
         raise
 ```
-
-Both halves matter. A poll gives up and raises rather than reporting when the
-link is down, or when it times out before anything has answered. Its reads
-still count towards the gap's budget, and its opening requests towards the
-pause after connecting.
 
 It tunes two things. The timeout is not one of them: the connection runs with
 the largest timeout any of its units asks for, and a unit that asks for nothing
@@ -353,8 +356,9 @@ moment the socket is. Two opening requests that go unanswered earn a quarter
 second, then half, then one, then two. This one is never given back: it costs a
 single wait per connect, and a device that needed it still does.
 
-`tuner.tuning` is what it asks of the link, which is worth putting in a
-diagnostics download, and worth storing:
+`inverter.link_tuning` (or `tuner.tuning`) is what it asks of the link, which
+is worth putting in a diagnostics download. A standalone tuner can also be
+stored and restored:
 
 ```python
 tuner.restore(saved)  # before the first poll
