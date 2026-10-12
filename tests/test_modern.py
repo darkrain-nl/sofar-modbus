@@ -572,6 +572,28 @@ async def test_passive_mode_writes(
     ]
 
 
+@pytest.mark.parametrize("timeout", [-1, 65536])
+async def test_a_passive_timeout_must_fit_its_register(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit, timeout: int
+) -> None:
+    events: list[WriteEvent] = []
+    mock_modbus_unit.on_write(events.append)
+    with pytest.raises(ValueError, match="outside 0-65535"):
+        await hybrid.passive.async_write_timeout(
+            timeout, PassiveModeTimeoutAction.FORCE_STANDBY
+        )
+    assert not events
+
+
+async def test_the_longest_passive_timeout_is_written(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    await hybrid.passive.async_write_timeout(
+        65535, PassiveModeTimeoutAction.FORCE_STANDBY
+    )
+    assert await mock_modbus_unit.read_holding_registers(0x1184, 1) == [65535]
+
+
 async def test_set_time_writes_seven_registers(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
