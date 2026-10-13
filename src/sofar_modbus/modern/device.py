@@ -259,6 +259,7 @@ class SofarInverter(Device):
         self._readings: list[str] = []
         self._settings: list[str] = []
         self._settled = False
+        self._unrecognized = False
         self._packs_answering: dict[tuple[int, int], bool] = {}
 
     @classmethod
@@ -297,6 +298,11 @@ class SofarInverter(Device):
     def link_tuning(self) -> LinkTuning:
         """What the tuner asks of the link."""
         return self._tuner.tuning
+
+    @property
+    def unrecognized(self) -> bool:
+        """Whether neither the serial nor the masks settle a type."""
+        return self._unrecognized
 
     @property
     def has_battery_tower(self) -> bool:
@@ -400,7 +406,9 @@ class SofarInverter(Device):
 
     async def _async_detect_type(self) -> None:
         """Take the type from the masks when the serial settled none."""
-        if (detected := await async_detect_type(self.modbus_unit)) is None:
+        detected = await async_detect_type(self.modbus_unit)
+        self._unrecognized = detected is None
+        if detected is None:
             _LOGGER.debug(
                 "Inverter %s publishes no usable mask, its type stays unknown",
                 self.serial_number,
