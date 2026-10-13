@@ -84,6 +84,9 @@ _SET_TIME_APPLIES_TO = PV | HYBRID
 _IV_CURVE_SCAN_REGISTER = 0x1027
 _IV_CURVE_SCAN_APPLIES_TO = HYBRID
 
+# Tries at the identity, enough to ride out a transient blip.
+_IDENTITY_ATTEMPTS = 3
+
 # Keys are the valid numbers; values name the component polling each.
 PV_STRING_COMPONENTS: Final[Mapping[int, str]] = MappingProxyType(
     {
@@ -259,6 +262,8 @@ class SofarInverter(Device):
         self._readings: list[str] = []
         self._settings: list[str] = []
         self._settled = False
+        self._unrecognized = False
+        self._identity_pending = False
         self._packs_answering: dict[tuple[int, int], bool] = {}
 
     @classmethod
@@ -297,6 +302,11 @@ class SofarInverter(Device):
     def link_tuning(self) -> LinkTuning:
         """What the tuner asks of the link."""
         return self._tuner.tuning
+
+    @property
+    def unrecognized(self) -> bool:
+        """Whether neither the serial nor the masks settle a type."""
+        return self._unrecognized
 
     @property
     def has_battery_tower(self) -> bool:
@@ -400,7 +410,9 @@ class SofarInverter(Device):
 
     async def _async_detect_type(self) -> None:
         """Take the type from the masks when the serial settled none."""
-        if (detected := await async_detect_type(self.modbus_unit)) is None:
+        detected = await async_detect_type(self.modbus_unit)
+        self._unrecognized = detected is None
+        if detected is None:
             _LOGGER.debug(
                 "Inverter %s publishes no usable mask, its type stays unknown",
                 self.serial_number,
@@ -450,6 +462,38 @@ class SofarInverter(Device):
         _LOGGER.debug("Inverter %s answers the off-grid block", self.serial_number)
         return True
 
+    async def async_read_identity(self) -> None:
+        """Read the firmware versions, never failing over them.
+
+        A failed read is tried again on each later poll that answers.
+        """
+        if (err := await self._async_try_identity(_IDENTITY_ATTEMPTS)) is not None:
+            _LOGGER.warning(
+                "Inverter %s: could not read identity after %d tries: %s",
+                self.serial_number,
+                _IDENTITY_ATTEMPTS,
+                err,
+            )
+
+    async def _async_try_identity(self, attempts: int) -> ModbusError | None:
+        """Read the identity within ``attempts`` tries; the last error if not."""
+        failure: ModbusError | None = None
+        for _ in range(attempts):
+            try:
+                await self.identity.async_update()
+            except ModbusError as err:
+                failure = err
+                _LOGGER.debug(
+                    "Inverter %s: could not read identity: %s",
+                    self.serial_number,
+                    err,
+                )
+            else:
+                self._identity_pending = False
+                return None
+        self._identity_pending = True
+        return failure
+
     async def async_update_readings(self) -> UpdateReport:
         """Refresh telemetry measurements (power, energy, battery, state)."""
         return await self._async_tuned_poll(readings=True)
@@ -487,6 +531,8 @@ class SofarInverter(Device):
             if report.failed and report.updated:
                 report.failed.clear()
                 await self._async_read(first, report)
+            if self._identity_pending and report.updated:
+                await self._async_try_identity(1)
         except ModbusError as err:
             self._tuner.observe_failure(err)
             raise

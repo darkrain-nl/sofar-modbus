@@ -362,9 +362,11 @@ async def test_a_model_publishing_no_mask_stays_unknown(
     """Without a usable mask nothing changes: the type stays empty."""
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
     device = unknown_inverter(mock_modbus_unit, {})
-    await device.async_update()
+    report = await device.async_update()
+    assert device.unrecognized
     assert device.inverter_type == InverterType(0)
     assert device.readings_components == ()
+    assert not report.updated and not report.failed
     assert (
         "Inverter NOPE000000001 publishes no usable mask, its type stays unknown"
         in caplog.messages
@@ -380,6 +382,7 @@ async def test_one_refused_block_decides_nothing(
     mock_modbus_unit.fail_read(refused, IllegalDataAddressError())
     await device.async_update()
     assert device.inverter_type == InverterType(0)
+    assert device.unrecognized
 
 
 @pytest.mark.parametrize("silent", [0x0480, 0x0600, 0x0580])
@@ -480,6 +483,55 @@ async def test_detection_with_a_known_serial_reads_no_mask(
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     await SofarInverter.async_detect(mock_modbus_unit)
     assert not any(event.address & 0x3F == 0 for event in mock_modbus_unit.read_events)
+
+
+async def test_an_inverter_is_not_unrecognized_before_it_answers(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    device = unknown_inverter(mock_modbus_unit, {})
+    assert not device.unrecognized
+
+
+async def test_a_type_from_the_masks_is_recognized(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    await device.async_update()
+    assert not device.unrecognized
+
+
+async def test_a_type_from_the_serial_is_recognized(
+    hybrid: SofarInverter,
+) -> None:
+    await hybrid.async_update()
+    assert not hybrid.unrecognized
+
+
+@pytest.mark.parametrize(
+    ("masks", "unrecognized"),
+    [
+        pytest.param({}, True, id="no_mask"),
+        pytest.param(KTLX_G3_MASKS, False, id="masks"),
+    ],
+)
+async def test_detection_settles_the_verdict(
+    mock_modbus_unit: MockModbusUnit, masks: dict[int, int], unrecognized: bool
+) -> None:
+    unknown_inverter(mock_modbus_unit, masks)
+    mock_modbus_unit.holding[0x0445] = ascii_words(UNKNOWN_SERIAL, 7)
+    device = await SofarInverter.async_detect(mock_modbus_unit)
+    assert device.unrecognized is unrecognized
+
+
+async def test_an_unanswered_mask_is_no_verdict(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A sleeping inverter must not read as an unrecognized one."""
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    mock_modbus_unit.fail_read(0x0480, ModbusTimeoutError("asleep"))
+    with pytest.raises(ModbusTimeoutError):
+        await device.async_update()
+    assert not device.unrecognized
 
 
 async def test_the_type_can_be_detected_without_a_device(

@@ -41,7 +41,9 @@ phase count from the grid block, PV or hybrid from the battery block, the MPPT
 tier from the highest PV string served, and a BTS tower from the tower's mask.
 This is derived from Sofar's register map, not checked against every model, so
 the model name stays `None`. An inverter publishing no usable mask keeps the
-empty type and polls nothing, as before. `async_detect_type(unit)` asks the
+empty type and polls nothing, and `unrecognized` turns True to say so. A mask
+read that times out leaves it False, so a sleeping inverter is never called
+unrecognized. `async_detect_type(unit)` asks the
 same question without a device, for a caller vetting a serial before setup.
 
 ## Usage
@@ -164,8 +166,8 @@ undo what a poll already read.
 
 - `async_update_readings()` — what the inverter measures: power, yield, battery,
   state, faults.
-- `async_update_settings()` — what it has been configured to do, plus the
-  identity: registers that change when something writes them, not on their own.
+- `async_update_settings()` — what it has been configured to do: registers that
+  change when something writes them, not on their own.
 - `async_update()` — both, in one merged report, for a caller that does not want
   to schedule them apart.
 
@@ -189,11 +191,15 @@ settles they return the same lists as the plain properties, so setup can still
 add the off-grid components it probed for and drop the ones a mask denies. An
 unrecognised serial expects nothing, as its type comes from the masks.
 
-This is worth scheduling: a three-phase HYD hybrid polls 276 registers in 31 blocks,
-of which the settings are 65 registers in 13 blocks — the 0x1000 settings block,
-and `identity`, which holds a serial number, firmware versions and the clock
-`async_set_time()` writes. A single-phase KTL-M splits 135 registers in 11 blocks into
-110 read and 25 configured.
+This is worth scheduling: a three-phase HYD hybrid polls 286 registers in 31
+blocks, of which the settings are 45 registers in 11 blocks. A single-phase
+KTL-M splits 144 registers in 11 blocks into 139 read and 5 configured.
+
+`identity`, the serial number and firmware versions, is in neither poll: it
+never changes, and nothing reads it unasked. `async_read_identity()` reads it,
+three tries against a blip, then a warning instead of an error. After that,
+each poll that gets an answer tries once more until it reads. An inverter from
+`async_detect()` already has it.
 
 `SofarLegacyInverter` has no writable settings, so it refreshes all of its
 served components in one pass through `async_update()`, and does not offer the
