@@ -46,7 +46,7 @@ from sofar_modbus.variants import (
     InverterType,
 )
 
-from .conftest import HYBRID_SERIAL, MODERN_HOLDING, ascii_words
+from .conftest import HYBRID_SERIAL, MODERN_HOLDING, ascii_words, fail_then
 
 
 def test_identify_maps_serial_prefixes() -> None:
@@ -244,6 +244,96 @@ async def test_setup_never_reads_the_serial_number(
     assert device.inverter_type == hybrid.inverter_type
     assert device._readings == hybrid._readings
     assert device._settings == hybrid._settings
+
+
+def _identity_reads(unit: MockModbusUnit) -> int:
+    return sum(e.address == 0x0445 for e in unit.read_events)
+
+
+async def test_a_poll_never_reads_the_identity_unasked(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    await hybrid.async_update()
+    await hybrid.async_update_readings()
+    assert _identity_reads(mock_modbus_unit) == 0
+    assert hybrid.identity.software_version is None
+
+
+async def test_reading_the_identity_gives_the_versions(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    await hybrid.async_read_identity()
+    assert hybrid.identity.hardware_version == "V1"
+    assert hybrid.identity.software_version == "V210"
+    assert _identity_reads(mock_modbus_unit) == 1
+
+
+async def test_identity_retries_after_one_failure(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A transient blip is ridden out within the same call."""
+    fail_then(monkeypatch, mock_modbus_unit, 0x044D, ServerDeviceFailureError(), None)
+    await hybrid.async_read_identity()
+    assert hybrid.identity.hardware_version == "V1"
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+async def test_an_unreadable_identity_warns_and_never_raises(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mock_modbus_unit.fail_read(0x044D, ServerDeviceFailureError())
+    await hybrid.async_read_identity()
+
+    assert hybrid.identity.software_version is None
+    assert _identity_reads(mock_modbus_unit) == 3
+    (warning,) = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warning.name == "sofar_modbus.modern.device"
+    assert warning.getMessage().startswith(
+        "Inverter SP1ES12345678: could not read identity after 3 tries: "
+    )
+
+
+async def test_a_later_answering_poll_reads_a_missing_identity(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mock_modbus_unit.fail_read(0x044D, ServerDeviceFailureError())
+    await hybrid.async_read_identity()
+    mock_modbus_unit.read_events.clear()
+    caplog.clear()
+
+    await hybrid.async_update_readings()  # still failing: one try, quietly
+    assert _identity_reads(mock_modbus_unit) == 1
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    mock_modbus_unit.fail_read(0x044D, None)
+    await hybrid.async_update_settings()
+    assert hybrid.identity.software_version == "V210"
+
+    mock_modbus_unit.read_events.clear()
+    await hybrid.async_update_readings()
+    assert _identity_reads(mock_modbus_unit) == 0
+
+
+async def test_a_poll_nothing_answered_does_not_ask_for_the_identity(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """An inverter answering nothing would only add a wait."""
+    await hybrid.async_update_readings()
+    mock_modbus_unit.fail_read(0x044D, ServerDeviceFailureError())
+    await hybrid.async_read_identity()
+    mock_modbus_unit.fail_requests(IllegalDataAddressError())
+    mock_modbus_unit.read_events.clear()
+
+    await hybrid.async_update_readings()
+
+    assert len(mock_modbus_unit.read_events) == len(hybrid.readings_components)
 
 
 async def test_state_and_faults(hybrid: SofarInverter) -> None:
