@@ -271,6 +271,21 @@ async def test_an_unknown_serial_takes_its_type_from_the_masks(
     assert device.model is None
 
 
+async def test_a_pv_inverter_polls_the_clock_result_its_mask_serves(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """The KTLX-G3 serves 0x100A and acknowledges the clock write."""
+    device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
+    await device.async_update()
+    assert device.supports_set_time
+    assert device.settings_components == (
+        "rtc_sync",
+        "feed_in",
+        "remote",
+        "active_power_control",
+    )
+
+
 async def test_a_hybrid_is_detected_from_its_battery_and_strings(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:

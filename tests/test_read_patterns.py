@@ -174,7 +174,7 @@ async def test_a_pv_only_inverter_never_touches_the_battery_registers(
     assert not read & set(range(0x0504, 0x0528))  # off-grid (EPS)
     assert read >= set(range(0x0684, 0x0694))  # a PV inverter still has energy
     # A single-phase PV inverter is a fraction of the hybrid's poll.
-    assert sum(b.count for b in blocks) == 144
+    assert sum(b.count for b in blocks) == 145
 
 
 async def test_the_extra_mppt_strings_are_only_read_where_they_exist(

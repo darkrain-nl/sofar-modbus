@@ -193,7 +193,7 @@ unrecognised serial expects nothing, as its type comes from the masks.
 
 This is worth scheduling: a three-phase HYD hybrid polls 286 registers in 31
 blocks, of which the settings are 45 registers in 11 blocks. A single-phase
-KTL-M splits 144 registers in 11 blocks into 139 read and 5 configured.
+KTL-M splits 145 registers in 12 blocks into 139 read and 6 configured.
 
 `identity`, the serial number and firmware versions, is in neither poll: it
 never changes, and nothing reads it unasked. `async_read_identity()` reads it,

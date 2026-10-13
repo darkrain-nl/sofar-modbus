@@ -33,7 +33,7 @@ def _parallel_address(value: int) -> int:
 class RtcSyncResult(SofarComponent):
     """Result of the last real-time-clock write."""
 
-    applies_to = HYBRID
+    applies_to = PV | HYBRID
 
     sync_rtc_result = enum(0x100A, SyncRtcResult, signed=False)
     """Update System Time Operation Result."""
