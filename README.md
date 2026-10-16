@@ -275,10 +275,20 @@ which is the quickest way to see whether an inverter is reachable, addressed
 correctly, and detected as the model you expect:
 
 ```bash
+# a gateway answering Modbus TCP: pass no framing (502 is the default)
+uv run script/query.py 192.168.1.50 --port 502 --unit 1
+# a box forwarding the RTU frames over TCP
 uv run script/query.py socket://192.168.1.50:8899 --transport serial --unit 1
+# a USB or serial adapter, on an older-generation inverter
 uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
-uv run script/query.py 192.168.1.50 --unit 1 --raw
+# every register read, plus ranges the library does not model
+uv run script/query.py 192.168.1.50 --raw --registers 0x1480:40 --registers 0x2004
 ```
+
+Which line fits depends on what sits between you and the inverter's RS-485
+line, as [Naming the link](#naming-the-link) explains. With a gateway answering
+Modbus TCP, leave the framing out: `--framer rtu` there times out on every
+register, which looks exactly like an inverter asleep.
 
 The two generations share serial prefixes, so the script does not guess which
 one it is talking to: pass `--legacy` for an older inverter. It prints the read
@@ -287,6 +297,16 @@ rather than only in the tests. It follows the count with how long those reads
 took, median, p95 and slowest, which is what to judge a timeout against.
 `--raw` adds every register it read, undecoded, which is what an issue about a
 wrong value should quote.
+
+For a current-generation inverter it also prints the address masks and the type
+they declare on their own, next to the type from the serial. A mismatch there,
+such as the masks declaring a PV string the serial's profile lacks, is the
+first thing to look for when entities are missing. The lines after it are the
+library's own verdicts (unrecognized, battery tower, wired battery strings,
+clock and IV-curve support), which decide what Home Assistant creates.
+`--registers ADDR[:COUNT]` reads any holding range raw, up to 125 registers
+per range, for checking a register the library does not model yet. All of
+these reads come after the poll, so they do not count towards its timings.
 
 ## Naming the link
 
