@@ -25,7 +25,7 @@ from sofar_modbus import (
     SofarLegacyInverter,
     matches,
 )
-from sofar_modbus.modern import async_detect_type
+from sofar_modbus.modern import BatteryPack, async_detect_type
 from sofar_modbus.tuning import LinkStats, TimedUnit
 
 # An inverter's RS-485 line, direct or through a socket:// device, and
@@ -35,8 +35,8 @@ CONNECTIONS = (("tcp", "rtu"), ("tcp", "socket"), ("serial", "rtu"))
 
 # The most registers one Modbus read may ask for.
 MAX_COUNT = 125
-# The tower's selection register takes packs 0 to 15.
-MAX_PACKS = 16
+# The tower's selection register takes groups and packs 0 to 15.
+MAX_INDEX = 16
 
 Inverter = SofarInverter | SofarLegacyInverter
 RegisterRead = tuple[int, int, list[int] | str]
@@ -132,27 +132,41 @@ async def _read_registers(
     return reads
 
 
+async def _read_pack(
+    inverter: SofarInverter, group_nr: int, pack_nr: int
+) -> tuple[str, BatteryPack | None]:
+    """One pack as printed text, and the pack if it answered."""
+    text = io.StringIO()
+    title = f"battery_pack group {group_nr} pack {pack_nr}"
+    try:
+        pack = await inverter.async_read_pack(pack_nr, group_nr)
+    except ModbusError as err:
+        text.write(f"{title}\n{'-' * len(title)}\n")
+        text.write(f"  {str(err) or type(err).__name__}\n")
+        return text.getvalue(), None
+    with redirect_stdout(text):
+        print_component(pack, title=title)
+    # A tower can ignore the selection and keep serving another pack.
+    if pack.pack_id is not None and pack.pack_id & 0x0FFF != group_nr << 8 | pack_nr:
+        text.write(
+            f"  the tower still serves group {pack.pack_id >> 8 & 0xF} "
+            f"pack {pack.pack_id & 0xFF}\n"
+        )
+    return text.getvalue(), pack
+
+
 async def _read_packs(inverter: SofarInverter) -> list[str]:
-    """Each tower pack as printed text, taken before the link closes."""
-    texts: list[str] = []
-    count, pack_nr = 1, 0
-    while pack_nr < count:
-        text = io.StringIO()
-        title = f"battery_pack {pack_nr}"
-        try:
-            pack = await inverter.async_read_pack(pack_nr)
-        except ModbusError as err:
-            text.write(f"{title}\n{'-' * len(title)}\n")
-            text.write(f"  {str(err) or type(err).__name__}\n")
-        else:
-            count = min(pack.parallel_group_count or 1, MAX_PACKS)
-            with redirect_stdout(text):
-                print_component(pack, title=title)
-            # A tower can ignore the selection and keep serving another pack.
-            if pack.pack_id is not None and pack.pack_id & 0x0FFF != pack_nr:
-                text.write(f"  the tower still serves pack {pack.pack_id & 0xFF}\n")
-        texts.append(text.getvalue())
-        pack_nr += 1
+    """Every pack of every group, taken before the link closes."""
+    text, first = await _read_pack(inverter, 0, 0)
+    texts = [text]
+    if first is None:
+        return texts
+    groups = min(first.parallel_group_count or 1, MAX_INDEX)
+    per_group = min(first.packs_per_group or 1, MAX_INDEX)
+    for group_nr in range(groups):
+        for pack_nr in range(per_group):
+            if group_nr or pack_nr:
+                texts.append((await _read_pack(inverter, group_nr, pack_nr))[0])
     return texts
 
 

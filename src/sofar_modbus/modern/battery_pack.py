@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from asyncio import sleep
 from datetime import datetime
 
 from modbus_connection.model import bits, gauge, integer, string, uint32
@@ -11,6 +12,10 @@ from ..variants import BAT_BTS
 
 _BMS_INQUIRE_REGISTER = 0x9020  # selects which pack 0x9044+ reports
 _PACK_ID_REGISTER = 0x9044  # which pack it reports right now
+
+# The tower switches packs a moment after the write, not with it.
+_SETTLE_STEP = 0.3  # seconds between pack_id checks
+_SETTLE_STEPS = 10  # checks before reading whatever it serves
 
 
 class BatteryPack(SofarComponent):
@@ -26,8 +31,8 @@ class BatteryPack(SofarComponent):
 
     pack_model = string(0x9007, 4)
     bms_version = integer(0x900B, signed=False)
-    series_cell_count = bits(0x900D, 0, 8)
-    """Cells in series across the packs (low byte of 0x900D)."""
+    packs_per_group = bits(0x900D, 0, 8)
+    """Packs in each group (low byte of 0x900D)."""
     parallel_group_count = bits(0x900D, 8, 8)
     """Battery groups running in parallel (high byte of 0x900D)."""
     realtime_capacity = integer(0x900E, signed=False, unit="%")
@@ -105,7 +110,7 @@ class BatteryPack(SofarComponent):
             return None
 
     async def async_select(self, pack_nr: int, group_nr: int = 0) -> None:
-        """Point the block at one pack; confirm the switch via ``pack_id``."""
+        """Point the block at one pack and wait for the tower to switch."""
         for name, value in (("pack", pack_nr), ("group", group_nr)):
             if not 0 <= value <= 15:
                 raise ValueError(f"battery {name} {value} is outside 0-15")
@@ -115,3 +120,8 @@ class BatteryPack(SofarComponent):
         if current[0] & 0x0FFF == selection:
             return
         await self._unit.write_register(_BMS_INQUIRE_REGISTER, selection)
+        for _ in range(_SETTLE_STEPS):
+            await sleep(_SETTLE_STEP)
+            current = await self._unit.read_holding_registers(_PACK_ID_REGISTER, 1)
+            if current[0] & 0x0FFF == selection:
+                return

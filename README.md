@@ -238,15 +238,19 @@ if inverter.has_battery_tower:
     print(pack.pack_serial_number, pack.soc, pack.cell_1_voltage)
 ```
 
-How many packs there are to read is `parallel_group_count`, the high byte of
-0x900D. Its low byte is `series_cell_count`, how many cells a pack has in
-series, which is not a second dimension to iterate: a tower of four 16-cell
-packs reports 0x0410, and reading that as four packs of sixteen asks for 64
-packs that do not exist. Once a pack answers, `packs_in_group` and
-`cells_in_pack` confirm both counts from the pack's own registers.
+0x900D says which packs there are: its high byte, `parallel_group_count`, is
+how many groups run in parallel, and its low byte, `packs_per_group`, how many
+packs each group holds. Every pack is a group and a pack number, so iterate
+both: a tower of three groups of one pack reports 0x0301 and serves
+`group_nr` 0, 1 and 2, each as `pack_nr` 0. Once a pack answers,
+`packs_in_group` confirms the count from its own registers, and
+`cells_in_pack` says how many cells it has.
 
-Asking for the pack a tower already serves writes nothing to the selection
-register, so a tower that rejects that register still reports its current pack.
+Selecting a pack writes the selection register (0x9020), and the tower switches
+a moment later, so `async_read_pack()` waits up to about three seconds for
+`pack_id` to name the pack before reading. A tower that never switches is read
+anyway, so check `pack_id`. Asking for the pack a tower already serves writes
+nothing, so a tower that rejects the register still reports its current pack.
 
 For an issue report, `async_read_raw()` dumps every register the inverter reads
 undecoded, keyed by address space and address — every block a poll covers, for
