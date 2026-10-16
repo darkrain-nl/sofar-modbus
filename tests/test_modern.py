@@ -31,6 +31,7 @@ from sofar_modbus.modern import (
     RemoteSwitchOnOff,
     SyncRtcResult,
     SystemState,
+    battery_pack,
     identify,
 )
 from sofar_modbus.variants import (
@@ -737,7 +738,7 @@ async def test_battery_pack_is_selected_then_read(
     pack = await hybrid.async_read_pack(pack_nr=1, group_nr=2)
     assert [(e.address, e.values) for e in writes] == [(0x9020, [(2 << 8) | 1])]
     assert pack.pack_model == "BTS5K"
-    assert pack.series_cell_count == 24
+    assert pack.packs_per_group == 1
     assert pack.parallel_group_count == 3
     assert pack.total_voltage == pytest.approx(51.2)
     assert pack.total_current == pytest.approx(-5.0)
@@ -753,7 +754,7 @@ async def test_battery_pack_is_selected_then_read(
     assert pack.cell_balancing == 0b101
     assert pack.pack_total_voltage == pytest.approx(51.2)
     assert pack.pack_soc == 87
-    assert pack.packs_in_group == 3
+    assert pack.packs_in_group == 1
     assert pack.cells_in_pack == 24
 
 
@@ -766,6 +767,58 @@ async def test_selecting_the_pack_already_served_writes_nothing(
     pack = await hybrid.async_read_pack(pack_nr=0)
     assert writes == []
     assert pack.pack_id == 0
+
+
+def serve_selections(unit: MockModbusUnit) -> None:
+    """Have the tower serve each pack selection as it is written."""
+
+    def on_write(event: WriteEvent) -> None:
+        if event.address == 0x9020:
+            unit.holding[0x9044] = event.values[0]
+
+    unit.on_write(on_write)
+
+
+async def test_a_switching_tower_serves_the_selected_pack(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    serve_selections(mock_modbus_unit)
+    pack = await hybrid.async_read_pack(pack_nr=0, group_nr=2)
+    assert pack.pack_id == 2 << 8
+
+
+async def test_a_slow_tower_is_given_time_to_switch(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tower switches a moment after the write, not with it."""
+    selected: list[int] = []
+    mock_modbus_unit.on_write(lambda event: selected.append(event.values[0]))
+    waits = 0
+
+    async def settle(_seconds: float) -> None:
+        nonlocal waits
+        waits += 1
+        if waits == 3:
+            mock_modbus_unit.holding[0x9044] = selected[-1]
+
+    monkeypatch.setattr(battery_pack, "sleep", settle)
+    pack = await hybrid.async_read_pack(pack_nr=0, group_nr=1)
+    assert pack.pack_id == 1 << 8
+    pack_id_reads = [e for e in mock_modbus_unit.read_events if e.address == 0x9044]
+    # The check before the write, three while settling, then the block.
+    assert len(pack_id_reads) == 5
+
+
+async def test_a_tower_that_never_switches_is_read_anyway(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """The caller learns it from ``pack_id``, not from an error."""
+    pack = await hybrid.async_read_pack(pack_nr=0, group_nr=1)
+    assert pack.pack_id == 0
+    pack_id_reads = [e for e in mock_modbus_unit.read_events if e.address == 0x9044]
+    assert len(pack_id_reads) == 1 + battery_pack._SETTLE_STEPS + 1
 
 
 async def test_selecting_outside_the_addressable_range_is_refused(

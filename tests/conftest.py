@@ -6,6 +6,7 @@ import pytest
 from modbus_connection.mock import MockModbusUnit
 
 from sofar_modbus import SofarInverter, SofarLegacyInverter
+from sofar_modbus.modern import battery_pack
 
 
 def ascii_words(text: str, length: int) -> list[int]:
@@ -152,11 +153,11 @@ MODERN_HOLDING: dict[int, int | list[int]] = {
     0x118B: [0, 3000],  # passive battery power max -> 3000 W
 }
 
-# A BTS battery tower: three parallel groups of 24-cell packs, pack 0/0.
+# A BTS tower of three parallel groups, one 24-cell pack each.
 BATTERY_PACK_HOLDING: dict[int, int | list[int]] = {
     0x9007: ascii_words("BTS5K", 4),
     0x900B: 102,  # BMS version
-    0x900D: (3 << 8) | 24,  # 3 parallel groups, 24 cells in series
+    0x900D: (3 << 8) | 1,  # 3 parallel groups of 1 pack
     0x900E: 95,  # realtime capacity
     0x900F: 512,  # total voltage -> 51.2 V
     0x9010: 0xFFCE,  # total current -> -5.0 A (signed)
@@ -178,7 +179,7 @@ BATTERY_PACK_HOLDING: dict[int, int | list[int]] = {
     0x9075: 0b101,  # cells 1 and 3 balancing
     0x9079: 512,  # pack total voltage -> 51.2 V
     0x907A: 87,  # pack SOC
-    0x907B: 3,  # packs in this group
+    0x907B: 1,  # packs in this group
     0x907C: 24,  # cells in this pack
 }
 
@@ -217,6 +218,12 @@ LEGACY_HOLDING: dict[int, int | list[int]] = {
     0x0253: 3702,  # PV voltage 2 -> 370.2 V
     0x0255: 250,  # PV power 2 -> 2500 W
 }
+
+
+@pytest.fixture(autouse=True)
+def instant_pack_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Check a pack switch without waiting the tower's real settle time."""
+    monkeypatch.setattr(battery_pack, "_SETTLE_STEP", 0)
 
 
 @pytest.fixture
