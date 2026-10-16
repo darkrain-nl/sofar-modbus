@@ -31,14 +31,14 @@ def test_categories_hold_the_bits_they_were_assigned() -> None:
     # The vendor spec defines no categories, so each count is a choice.
     assert collections.Counter(fault.category for fault in FAULTS) == {
         FaultCategory.COMBINER_BOX: 96,
-        FaultCategory.INTERNAL: 42,
+        FaultCategory.INTERNAL: 44,
         FaultCategory.ARC_FAULT: 34,
         FaultCategory.STRING_FUSE: 32,
         FaultCategory.BATTERY: 24,
         FaultCategory.GRID: 20,
         FaultCategory.INPUT_FUSE: 16,
         FaultCategory.PV: 14,
-        FaultCategory.THERMAL: 14,
+        FaultCategory.THERMAL: 12,
         FaultCategory.DC_BUS: 14,
         FaultCategory.COMMUNICATION: 12,
         FaultCategory.AC_OUTPUT: 10,
@@ -48,6 +48,15 @@ def test_categories_hold_the_bits_they_were_assigned() -> None:
         FaultCategory.BATTERY_PACK: 4,
         FaultCategory.SHUTDOWN: 4,
     }
+
+
+def test_derating_and_surge_faults_sit_with_their_kin() -> None:
+    # The vendor's derating group holds 113-118; 121/122 pair with 142/143.
+    for fault_id in range(113, 119):
+        assert FAULTS_BY_ID[fault_id].category is FaultCategory.DERATING
+    for transient, permanent in ((121, 142), (122, 143)):
+        assert FAULTS_BY_ID[transient].category is FaultCategory.INTERNAL
+        assert FAULTS_BY_ID[permanent].category is FaultCategory.INTERNAL
 
 
 def test_every_fault_is_reachable_from_exactly_one_bit() -> None:
