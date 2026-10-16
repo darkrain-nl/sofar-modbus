@@ -24,6 +24,10 @@ from ..variants import (
     EPS,
     GEN,
     HYBRID,
+    MPPT3,
+    MPPT4,
+    MPPT6,
+    MPPT8,
     MPPT10,
     PM,
     PV,
@@ -47,6 +51,7 @@ from .masks import (
     TOWER_MASK_BLOCKS,
     async_detect_type,
     async_read_mask,
+    async_read_pv_tier,
     async_serves,
 )
 from .offgrid import OffGridSinglePhase, OffGridThreePhase, OffGridTotals
@@ -83,6 +88,7 @@ _SET_TIME_REGISTER = 0x1004
 _SET_TIME_APPLIES_TO = PV | HYBRID
 _IV_CURVE_SCAN_REGISTER = 0x1027
 _IV_CURVE_SCAN_APPLIES_TO = HYBRID
+_PV_TIERS = MPPT3 | MPPT4 | MPPT6 | MPPT8 | MPPT10
 
 # Tries at the identity, enough to ride out a transient blip.
 _IDENTITY_ATTEMPTS = 3
@@ -388,6 +394,10 @@ class SofarInverter(Device):
         """Settle which optional sub-systems this inverter serves."""
         if not self.inverter_type & ~PM:
             await self._async_detect_type()
+        elif MPPT10 not in self.inverter_type and matches(
+            self.inverter_type, self.pv_1_2.applies_to
+        ):
+            await self._async_raise_pv_tier()
         await self.rating.async_update(notify=False)
         if (
             EPS not in self.inverter_type
@@ -424,6 +434,21 @@ class SofarInverter(Device):
             detected.name,
         )
         self.inverter_type |= detected
+
+    async def _async_raise_pv_tier(self) -> None:
+        """Poll the PV strings the mask declares beyond the serial's.
+
+        A serial prefix can span models with different string counts.
+        """
+        tier = await async_read_pv_tier(self.modbus_unit)
+        if not tier or tier <= self.inverter_type & _PV_TIERS:
+            return
+        _LOGGER.debug(
+            "Inverter %s declares PV strings up to %s in its mask",
+            self.serial_number,
+            tier.name,
+        )
+        self.inverter_type = (self.inverter_type & ~_PV_TIERS) | tier
 
     async def _async_drop_denied_components(self) -> None:
         """Stop polling components the model says it does not serve.

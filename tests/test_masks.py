@@ -18,8 +18,11 @@ from sofar_modbus.variants import (
     EPS,
     GEN,
     HYBRID,
+    MPPT3,
     MPPT4,
     MPPT6,
+    MPPT8,
+    MPPT10,
     PM,
     PV,
     X1,
@@ -86,6 +89,10 @@ FIVE_STRING_PV_MASK = 0x3FFFF  # 0x0584-0x0592
 TWO_BATTERY_MASK = 0x3FFFF  # 0x0604-0x0611
 TOWER_MASK = 0x0F
 
+# An ESI-10K-T1 from a diagnostics download (sofar-modbus#66).
+ESI_SERIAL = "SH1ES1000000001"
+ESI_10K_PV_MASK = 0x1FFF  # 0x0584-0x058C, strings 1 to 3
+
 
 def mask_registers(mask: int) -> list[int]:
     """Split a mask into its four registers, most significant first."""
@@ -100,6 +107,15 @@ def unknown_inverter(
     for base, mask in masks.items():
         unit.holding[base] = mask_registers(mask)
     return SofarInverter(unit, serial_number=UNKNOWN_SERIAL, read_pm=read_pm)
+
+
+def known_inverter(
+    unit: MockModbusUnit, pv_mask: int, *, inverter_type: InverterType | None = None
+) -> SofarInverter:
+    """An inverter the prefix table knows, publishing ``pv_mask``."""
+    unit.holding.update(MODERN_HOLDING)
+    unit.holding[0x0580] = mask_registers(pv_mask)
+    return SofarInverter(unit, serial_number=ESI_SERIAL, inverter_type=inverter_type)
 
 
 @pytest.fixture
@@ -451,15 +467,88 @@ async def test_detection_keeps_read_pm(mock_modbus_unit: MockModbusUnit) -> None
     assert device.inverter_type == GEN | X3 | PV | PM
 
 
-async def test_a_known_serial_reads_no_mask_to_detect(
+async def test_a_known_serial_reads_only_the_pv_mask(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    """The prefix table already settled it, so detection never runs."""
+    """The prefix table settled the type; only the string count is asked."""
     await hybrid.async_update()
-    assert not any(
-        event.address in (0x0480, 0x0580, 0x0600)
+    masks_read = [
+        event.address
         for event in mock_modbus_unit.read_events
+        if event.address in (0x0480, 0x0580, 0x0600)
+    ]
+    assert masks_read == [0x0580]
+
+
+async def test_a_known_serial_polls_the_strings_its_mask_adds(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """SH1 spans the two-string HYD 5-8K and the three-string ESI-10K."""
+    device = known_inverter(mock_modbus_unit, ESI_10K_PV_MASK)
+    await device.async_update()
+    assert MPPT3 in device.inverter_type
+    assert "pv_3" in device.readings_components
+    assert "pv_4" not in device.readings_components
+
+
+async def test_a_raised_string_count_is_logged(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    device = known_inverter(mock_modbus_unit, ESI_10K_PV_MASK)
+    await device.async_update()
+    assert (
+        f"Inverter {ESI_SERIAL} declares PV strings up to MPPT3 in its mask"
+        in caplog.messages
     )
+
+
+async def test_a_mask_never_lowers_the_string_count(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    device = known_inverter(
+        mock_modbus_unit, ESI_10K_PV_MASK, inverter_type=GEN | X3 | PV | MPPT6
+    )
+    await device.async_update()
+    assert device.inverter_type == GEN | X3 | PV | MPPT6
+
+
+@pytest.mark.parametrize(
+    "pv_mask",
+    [
+        pytest.param(KTLX_G3_MASKS[0x0580], id="two strings"),
+        pytest.param(0, id="no mask"),
+        pytest.param(0xF0, id="self-denying"),
+        pytest.param((1 << 64) - 1, id="all ones"),
+    ],
+)
+async def test_a_known_serial_keeps_its_strings_without_a_higher_mask(
+    mock_modbus_unit: MockModbusUnit, pv_mask: int
+) -> None:
+    """An all-ones mask also comes back from blocks that never answer."""
+    device = known_inverter(mock_modbus_unit, pv_mask)
+    await device.async_update()
+    assert not device.inverter_type & (MPPT3 | MPPT4 | MPPT6 | MPPT8 | MPPT10)
+    assert "pv_3" not in device.readings_components
+
+
+async def test_an_unanswered_pv_mask_keeps_the_strings(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    device = known_inverter(mock_modbus_unit, ESI_10K_PV_MASK)
+    mock_modbus_unit.fail_read(0x0580, ModbusTimeoutError("no answer"))
+    await device.async_update()
+    assert "pv_3" not in device.readings_components
+
+
+async def test_the_top_string_tier_reads_no_pv_mask(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    device = known_inverter(
+        mock_modbus_unit, ESI_10K_PV_MASK, inverter_type=GEN | X3 | PV | MPPT10
+    )
+    await device.async_ensure_setup()
+    assert not any(e.address == 0x0580 for e in mock_modbus_unit.read_events)
 
 
 async def test_a_sleeping_inverter_is_detected_once_it_wakes(

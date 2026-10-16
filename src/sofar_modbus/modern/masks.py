@@ -71,6 +71,9 @@ TOWER_MASK_BLOCKS: tuple[int, ...] = (
 _PHASE_S_VOLTAGE = 0x0498  # served by three-phase models only
 _BATTERY_1_VOLTAGE = 0x0604  # served by hybrids only
 
+_PV_STRING_BLOCK = 0x0580
+_ALL_BITS = (1 << BLOCK_SIZE) - 1
+
 # PV string voltages, highest first, with the tier polling each. An odd
 # string count rounds up to the component reading the pair.
 _PV_STRING_TIERS: tuple[tuple[int, InverterType], ...] = (
@@ -123,28 +126,50 @@ async def async_detect_type(unit: ModbusUnit) -> InverterType | None:
     """The type the model's masks declare, ``None`` if one is unusable."""
     masks: dict[int, int | None] = {}
 
-    async def serves(address: int) -> bool | None:
-        base = address - address % BLOCK_SIZE
+    async def mask(base: int) -> int | None:
         if base not in masks:
             # A missed answer is no verdict, so it must not settle a type.
             masks[base] = await _async_read_mask(unit, base)
-        return _declares(masks[base], base, address)
+        return masks[base]
+
+    async def serves(address: int) -> bool | None:
+        base = address - address % BLOCK_SIZE
+        return _declares(await mask(base), base, address)
 
     if (three_phase := await serves(_PHASE_S_VOLTAGE)) is None:
         return None
     if (hybrid := await serves(_BATTERY_1_VOLTAGE)) is None:
         return None
+    if (tier := _pv_tier(await mask(_PV_STRING_BLOCK))) is None:
+        return None
     detected = GEN | (X3 if three_phase else X1) | (HYBRID if hybrid else PV)
-    for address, tier in _PV_STRING_TIERS:
-        if (served := await serves(address)) is None:
-            return None
-        if served:
-            detected |= tier
-            break
+    detected |= tier
     # A tower's usable mask declares its own base; no tower times out.
     if hybrid and await async_serves(unit, TOWER_MASK_BLOCKS[0]):
         detected |= BAT_BTS
     return detected
+
+
+async def async_read_pv_tier(unit: ModbusUnit) -> InverterType | None:
+    """The PV string tier the model declares, ``None`` if unusable.
+
+    ``InverterType(0)`` means strings 1 and 2 only.
+    """
+    mask = await async_read_mask(unit, _PV_STRING_BLOCK)
+    # Blocks that never answer can still publish an all-ones mask.
+    if mask == _ALL_BITS:
+        return None
+    return _pv_tier(mask)
+
+
+def _pv_tier(mask: int | None) -> InverterType | None:
+    """The tier of the highest PV string ``mask`` declares valid."""
+    for address, tier in _PV_STRING_TIERS:
+        if (served := _declares(mask, _PV_STRING_BLOCK, address)) is None:
+            return None
+        if served:
+            return tier
+    return InverterType(0)
 
 
 def _declares(mask: int | None, base: int, address: int) -> bool | None:
