@@ -63,11 +63,11 @@ class TornReadCorrectedComponent(SofarComponent):
         self._corrected: dict[str, float] = {}
         self.add_update_listener(self._correct_totals)
 
-    def corrected(self, name: str) -> float | None:
+    def _corrected_value(self, name: str) -> float | None:
         """The torn-read-corrected value of a declared total field."""
         return self._corrected.get(name)
 
-    def seed_high_water(self, name: str, value: float) -> None:
+    def _seed_high_water(self, name: str, value: float) -> None:
         """Prime a field's high-water mark; a lower seed leaves it be."""
         self._high_water[name] = max(self._high_water.get(name, value), value)
 
@@ -100,11 +100,11 @@ class CorrectedTotal:
     @property
     def value(self) -> float | None:
         """The corrected value; ``None`` until the first poll."""
-        return self.component.corrected(self.name)
+        return self.component._corrected_value(self.name)
 
     def seed(self, value: float) -> None:
         """Prime the high-water mark, e.g. from a restored HA state."""
-        self.component.seed_high_water(self.name, value)
+        self.component._seed_high_water(self.name, value)
 
 
 class _CorrectedTotalField:

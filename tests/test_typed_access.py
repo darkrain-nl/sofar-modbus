@@ -128,7 +128,8 @@ async def test_total_handle_reads_and_seeds(
     await hybrid.async_update()
 
     assert total.value == pytest.approx(10005.0)
-    assert hybrid.energy.corrected("solar_generation_total") == total.value
+    # A handle keeps no state: a fresh one reads the same total.
+    assert hybrid.energy.solar_generation_total_corrected.value == total.value
 
 
 async def test_write_charger_mode_typed(
