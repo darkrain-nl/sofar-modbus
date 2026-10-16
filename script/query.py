@@ -23,20 +23,29 @@ from sofar_modbus import (
     SofarLegacyInverter,
     matches,
 )
+from sofar_modbus.modern import async_detect_type
 from sofar_modbus.tuning import LinkStats, TimedUnit
 
 # An inverter's RS-485 line, direct or through a socket:// device, and
 # the gateways answering Modbus TCP themselves. No ASCII: the library
-# does not support it. The tcp framings are the deprecated spelling of
-# a serial line, kept working while the examples move over.
+# does not support it. The tcp framings are deprecated spellings.
 CONNECTIONS = (("tcp", "rtu"), ("tcp", "socket"), ("serial", "rtu"))
 
+# The most registers one Modbus read may ask for.
+MAX_COUNT = 125
+
 Inverter = SofarInverter | SofarLegacyInverter
+RegisterRead = tuple[int, int, list[int] | str]
 
 EXAMPLES = """examples:
+  # a gateway answering Modbus TCP: pass no framing (502 is the default)
+  uv run script/query.py 192.168.1.50 --port 502 --unit 1
+  # a box forwarding the RTU frames over TCP
   uv run script/query.py socket://192.168.1.50:8899 --transport serial --unit 1
+  # a USB or serial adapter, on an older-generation inverter
   uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
-  uv run script/query.py 192.168.1.50 --unit 1 --raw
+  # every register read, plus ranges the library does not model
+  uv run script/query.py 192.168.1.50 --raw --registers 0x1480:40 --registers 0x2004
 """
 
 
@@ -49,6 +58,28 @@ def _timings(stats: LinkStats) -> str:
         f"p95 {stats.p95 * 1000:.0f} ms, "
         f"slowest {stats.slowest * 1000:.0f} ms"
     )
+
+
+def _register_range(text: str) -> tuple[int, int]:
+    """Parse ``ADDR[:COUNT]``, each decimal or 0x-prefixed."""
+    address, _, count = text.partition(":")
+    try:
+        start, length = int(address, 0), int(count or "1", 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not ADDR[:COUNT]") from None
+    if not 1 <= length <= MAX_COUNT or not 0 <= start <= 0x10000 - length:
+        raise argparse.ArgumentTypeError(
+            f"{text!r} must read 1 to {MAX_COUNT} registers ending by 0xFFFF"
+        )
+    return start, length
+
+
+def _line(label: str, value: object) -> None:
+    print(f"{label:<16}{value}")
+
+
+def _yes_no(flag: bool) -> str:
+    return "yes" if flag else "no"
 
 
 def served_components(inverter: Inverter) -> list[tuple[str, Component]]:
@@ -71,6 +102,58 @@ def served_components(inverter: Inverter) -> list[tuple[str, Component]]:
         if isinstance(component, SofarComponentBase)
         and matches(inverter_type, component.applies_to)
     ]
+
+
+async def _mask_type(unit: TimedUnit) -> str:
+    """The type the masks alone declare, to compare with the serial's."""
+    try:
+        detected = await async_detect_type(unit)
+    except ModbusError as err:
+        return f"unreadable: {str(err) or type(err).__name__}"
+    return "no usable mask" if detected is None else str(detected.name)
+
+
+async def _read_registers(
+    unit: TimedUnit, ranges: list[tuple[int, int]]
+) -> list[RegisterRead]:
+    """Each holding range's values, or why it could not be read."""
+    reads: list[RegisterRead] = []
+    for start, count in ranges:
+        try:
+            values: list[int] | str = await unit.read_holding_registers(start, count)
+        except ModbusError as err:
+            values = str(err) or type(err).__name__
+        reads.append((start, count, values))
+    return reads
+
+
+def _print_verdicts(inverter: SofarInverter, mask_type: str) -> None:
+    """What the library concluded, which decides the entities Core makes."""
+    strings = ", ".join(map(str, sorted(inverter.wired_battery_strings)))
+    _line("Mask type", mask_type)
+    _line("Unrecognized", _yes_no(inverter.unrecognized))
+    _line("Battery tower", _yes_no(inverter.has_battery_tower))
+    _line("Battery strings", strings or "none")
+    _line("Set time", _yes_no(inverter.supports_set_time))
+    _line("IV curve scan", _yes_no(inverter.supports_iv_curve_scan))
+
+
+def _print_masks(masks: dict[int, int]) -> None:
+    print("\nAddress masks")
+    if not masks:
+        print("  none answered")
+    for base, mask in masks.items():
+        print(f"  0x{base:04X}  0x{mask:016X}")
+
+
+def _print_registers(reads: list[RegisterRead]) -> None:
+    for start, count, values in reads:
+        print(f"\nRegisters 0x{start:04X}-0x{start + count - 1:04X}")
+        if isinstance(values, str):
+            print(f"  {values}")
+            continue
+        for offset, value in enumerate(values):
+            print(f"  0x{start + offset:04X}  0x{value:04X}  {value}")
 
 
 async def main() -> int:
@@ -97,6 +180,14 @@ async def main() -> int:
     parser.add_argument(
         "--raw", action="store_true", help="also dump every register read, as JSON"
     )
+    parser.add_argument(
+        "--registers",
+        type=_register_range,
+        action="append",
+        default=[],
+        metavar="ADDR[:COUNT]",
+        help=f"also read these holding registers, up to {MAX_COUNT} at a time",
+    )
     args = parser.parse_args()
 
     try:
@@ -108,6 +199,8 @@ async def main() -> int:
         return 1
 
     timed = TimedUnit(connection.for_unit(args.unit))
+    masks: dict[int, int] = {}
+    mask_type = ""
     try:
         inverter: Inverter = (
             await SofarLegacyInverter.async_detect(timed)
@@ -115,8 +208,12 @@ async def main() -> int:
             else await SofarInverter.async_detect(timed, read_pm=args.pm)
         )
         report = await inverter.async_update()  # the first update sets the inverter up
-        # A raw dump re-reads everything, so measure the poll alone.
+        # Everything below reads again, so measure the poll alone.
         poll_reads, poll_stats = timed.reads, timed.stats
+        if isinstance(inverter, SofarInverter):
+            masks = await inverter.async_read_masks()
+            mask_type = await _mask_type(timed)
+        registers = await _read_registers(timed, args.registers)
         raw = await inverter.async_read_raw() if args.raw else None
     except ModbusError as err:
         print(f"Could not read the inverter: {str(err) or type(err).__name__}")
@@ -126,10 +223,12 @@ async def main() -> int:
     finally:
         await connection.close()
 
-    print(f"Serial number  {inverter.serial_number}")
+    _line("Serial number", inverter.serial_number)
     if isinstance(inverter, SofarInverter):
-        print(f"Model          {inverter.model}")
-    print(f"Type           {inverter.inverter_type.name}")
+        _line("Model", inverter.model)
+    _line("Type", inverter.inverter_type.name)
+    if isinstance(inverter, SofarInverter):
+        _print_verdicts(inverter, mask_type)
     for name, component in served_components(inverter):
         print()
         print_component(component, title=name)
@@ -137,6 +236,9 @@ async def main() -> int:
         print("\nFailed to read:")
         for name, error in report.failed.items():
             print(f"  {name}: {str(error) or type(error).__name__}")
+    if isinstance(inverter, SofarInverter):
+        _print_masks(masks)
+    _print_registers(registers)
     if raw is not None:
         print("\nRaw registers")
         # The dump arrives address-ordered; sorting keys would undo that.
