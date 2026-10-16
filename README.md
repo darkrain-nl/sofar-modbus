@@ -283,6 +283,8 @@ uv run script/query.py socket://192.168.1.50:8899 --transport serial --unit 1
 uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
 # every register read, plus ranges the library does not model
 uv run script/query.py 192.168.1.50 --raw --registers 0x1480:40 --registers 0x2004
+# a hybrid with a BTS tower, every pack included
+uv run script/query.py 192.168.1.50 --packs
 ```
 
 Which line fits depends on what sits between you and the inverter's RS-485
@@ -307,6 +309,9 @@ clock and IV-curve support), which decide what Home Assistant creates.
 `--registers ADDR[:COUNT]` reads any holding range raw, up to 125 registers
 per range, for checking a register the library does not model yet. All of
 these reads come after the poll, so they do not count towards its timings.
+`--packs` reads every pack of a BTS tower, which is not polled. Selecting a pack
+writes the tower's selection register (0x9020), so this is the one option that
+writes; without it the script only reads.
 
 ## Naming the link
 
