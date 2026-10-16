@@ -233,8 +233,9 @@ async def test_setup_never_reads_the_serial_number(
     )
     await device._async_setup()
 
-    # Rating, the EPS probe and the meter mask; the serial is never touched.
+    # The PV mask, rating, EPS probe and meter mask; never the serial.
     assert [e.address for e in mock_modbus_unit.read_events] == [
+        0x0580,
         0x06ED,
         0x0504,
         0x0680,
