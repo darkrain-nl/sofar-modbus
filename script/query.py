@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import json
 import logging
+from contextlib import redirect_stdout
 
 from modbus_connection import ModbusError
 from modbus_connection.cli_helper import (
@@ -33,6 +35,8 @@ CONNECTIONS = (("tcp", "rtu"), ("tcp", "socket"), ("serial", "rtu"))
 
 # The most registers one Modbus read may ask for.
 MAX_COUNT = 125
+# The tower's selection register takes packs 0 to 15.
+MAX_PACKS = 16
 
 Inverter = SofarInverter | SofarLegacyInverter
 RegisterRead = tuple[int, int, list[int] | str]
@@ -46,6 +50,8 @@ EXAMPLES = """examples:
   uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
   # every register read, plus ranges the library does not model
   uv run script/query.py 192.168.1.50 --raw --registers 0x1480:40 --registers 0x2004
+  # a hybrid with a BTS tower, every pack included
+  uv run script/query.py 192.168.1.50 --packs
 """
 
 
@@ -93,7 +99,6 @@ def served_components(inverter: Inverter) -> list[tuple[str, Component]]:
             "rating",
             *inverter.readings_components,
             *inverter.settings_components,
-            *(("battery_pack",) if inverter.has_battery_tower else ()),
         )
         return [(name, getattr(inverter, name)) for name in names]
     return [
@@ -125,6 +130,30 @@ async def _read_registers(
             values = str(err) or type(err).__name__
         reads.append((start, count, values))
     return reads
+
+
+async def _read_packs(inverter: SofarInverter) -> list[str]:
+    """Each tower pack as printed text, taken before the link closes."""
+    texts: list[str] = []
+    count, pack_nr = 1, 0
+    while pack_nr < count:
+        text = io.StringIO()
+        title = f"battery_pack {pack_nr}"
+        try:
+            pack = await inverter.async_read_pack(pack_nr)
+        except ModbusError as err:
+            text.write(f"{title}\n{'-' * len(title)}\n")
+            text.write(f"  {str(err) or type(err).__name__}\n")
+        else:
+            count = min(pack.parallel_group_count or 1, MAX_PACKS)
+            with redirect_stdout(text):
+                print_component(pack, title=title)
+            # A tower can ignore the selection and keep serving another pack.
+            if pack.pack_id is not None and pack.pack_id & 0x0FFF != pack_nr:
+                text.write(f"  the tower still serves pack {pack.pack_id & 0xFF}\n")
+        texts.append(text.getvalue())
+        pack_nr += 1
+    return texts
 
 
 def _print_verdicts(inverter: SofarInverter, mask_type: str) -> None:
@@ -188,6 +217,12 @@ async def main() -> int:
         metavar="ADDR[:COUNT]",
         help=f"also read these holding registers, up to {MAX_COUNT} at a time",
     )
+    parser.add_argument(
+        "--packs",
+        action="store_true",
+        help="also read each BTS battery pack; selecting one writes the tower's "
+        "pack selection register (0x9020)",
+    )
     args = parser.parse_args()
 
     try:
@@ -201,6 +236,7 @@ async def main() -> int:
     timed = TimedUnit(connection.for_unit(args.unit))
     masks: dict[int, int] = {}
     mask_type = ""
+    packs: list[str] = []
     try:
         inverter: Inverter = (
             await SofarLegacyInverter.async_detect(timed)
@@ -213,6 +249,12 @@ async def main() -> int:
         if isinstance(inverter, SofarInverter):
             masks = await inverter.async_read_masks()
             mask_type = await _mask_type(timed)
+        if (
+            args.packs
+            and isinstance(inverter, SofarInverter)
+            and inverter.has_battery_tower
+        ):
+            packs = await _read_packs(inverter)
         registers = await _read_registers(timed, args.registers)
         raw = await inverter.async_read_raw() if args.raw else None
     except ModbusError as err:
@@ -236,6 +278,9 @@ async def main() -> int:
         print("\nFailed to read:")
         for name, error in report.failed.items():
             print(f"  {name}: {str(error) or type(error).__name__}")
+    for text in packs:
+        print()
+        print(text, end="")
     if isinstance(inverter, SofarInverter):
         _print_masks(masks)
     _print_registers(registers)
