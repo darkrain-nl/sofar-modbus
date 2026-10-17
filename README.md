@@ -139,8 +139,10 @@ for entry in inverter.fault_log.entries:
 
 `occurred_at` is naive, in the inverter's own clock. Unused slots and IDs not
 in `FAULTS` are left out. No address mask covers the log, so setup reads it
-once and stops polling it on a model where it does not answer or reads as
-anything other than empty or dated entries.
+once and stops polling it on a model that refuses it, answers junk, or stays
+silent through three tries. Once the log has answered, `has_fault_log` turns
+true: store it and pass it back as `SofarInverter(..., has_fault_log=True)`,
+and setup never drops the log again, whatever the link does that day.
 
 ### Numbered strings and corrected totals
 

@@ -10,13 +10,14 @@ from modbus_connection import (
     IllegalDataAddressError,
     ModbusConnectionError,
     ModbusTimeoutError,
+    ServerDeviceFailureError,
 )
 from modbus_connection.mock import MockModbusUnit
 
 from sofar_modbus import SofarInverter
 from sofar_modbus.modern import FAULTS_BY_ID, FaultLogEntry
 
-from .conftest import MODERN_HOLDING
+from .conftest import MODERN_HOLDING, fail_then
 
 LOG = 0x1480
 
@@ -130,27 +131,86 @@ async def test_a_later_read_moves_the_log_down(
     assert len(entries) == 10
 
 
+def _log_reads(unit: MockModbusUnit) -> int:
+    return sum(event.address == LOG for event in unit.read_events)
+
+
+async def test_setup_remembers_a_log_that_answers(ktlx: SofarInverter) -> None:
+    assert not ktlx.has_fault_log
+    await ktlx.async_update()
+    assert ktlx.has_fault_log
+
+
+async def test_a_remembered_log_is_never_dropped(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """A log seen on an earlier run outlives a silent setup."""
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.fail_read(LOG, ModbusTimeoutError("busy"))
+    inverter = SofarInverter(
+        mock_modbus_unit, serial_number="SS2ES104N5S445", has_fault_log=True
+    )
+    report = await inverter.async_update()
+    assert "fault_log" in inverter.readings_components
+    assert set(report.failed) == {"fault_log"}
+    assert inverter.has_fault_log
+
+
+async def test_a_remembered_log_skips_the_setup_probe(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    inverter = SofarInverter(
+        mock_modbus_unit, serial_number="SS2ES104N5S445", has_fault_log=True
+    )
+    await inverter.async_ensure_setup()
+    assert _log_reads(mock_modbus_unit) == 0
+
+
 @pytest.mark.parametrize(
-    "error",
-    [ModbusTimeoutError("no such block"), IllegalDataAddressError()],
+    "error", [ModbusTimeoutError("blip"), ServerDeviceFailureError()]
 )
-async def test_setup_drops_a_log_that_does_not_answer(
+async def test_setup_tries_the_log_again_after_a_transient_failure(
+    ktlx: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    fail_then(monkeypatch, mock_modbus_unit, LOG, error, None)
+    await ktlx.async_ensure_setup()
+    assert "fault_log" in ktlx.readings_components
+    assert ktlx.has_fault_log
+    assert _log_reads(mock_modbus_unit) == 2
+
+
+async def test_setup_drops_a_log_that_never_answers_for_this_run(
     ktlx: SofarInverter,
     mock_modbus_unit: MockModbusUnit,
     caplog: pytest.LogCaptureFixture,
-    error: Exception,
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
-    mock_modbus_unit.fail_read(LOG, error)
+    mock_modbus_unit.fail_read(LOG, ModbusTimeoutError("no such block"))
     report = await ktlx.async_update()
     assert "fault_log" not in ktlx.readings_components
     assert "fault_log" not in ktlx.expected_components
     assert not report.failed
+    assert not ktlx.has_fault_log
+    assert _log_reads(mock_modbus_unit) == 3
     assert any(
-        message.startswith("Inverter SS2ES104N5S445: the event log does not answer")
+        message.startswith("Inverter SS2ES104N5S445: the event log failed 3 tries")
         and message.endswith("dropping fault_log")
         for message in caplog.messages
     )
+
+
+async def test_setup_drops_a_refused_log_at_once(
+    ktlx: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    mock_modbus_unit.fail_read(LOG, IllegalDataAddressError())
+    await ktlx.async_ensure_setup()
+    assert "fault_log" not in ktlx.readings_components
+    assert not ktlx.has_fault_log
+    assert _log_reads(mock_modbus_unit) == 1
 
 
 async def test_setup_drops_a_log_that_reads_as_junk(
@@ -164,6 +224,7 @@ async def test_setup_drops_a_log_that_reads_as_junk(
     mock_modbus_unit.holding[LOG + 36] = [2, 2, 0, 47954]
     await ktlx.async_update()
     assert "fault_log" not in ktlx.readings_components
+    assert not ktlx.has_fault_log
     assert (
         "Inverter SS2ES104N5S445: the event log reads as junk, dropping fault_log"
         in caplog.messages
