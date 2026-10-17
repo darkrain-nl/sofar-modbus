@@ -44,6 +44,7 @@ from .battery import (
 )
 from .battery_pack import BatteryPack
 from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
+from .fault_log import FaultLog
 from .inverter import GridOutput, Identity, InverterState
 from .masks import (
     GATED_COMPONENTS,
@@ -130,6 +131,7 @@ _READING_COMPONENTS = (
     "energy",
     "meter_energy",
     "battery_energy",
+    "fault_log",
 )
 _SETTING_COMPONENTS = (
     "rtc_sync",
@@ -242,6 +244,7 @@ class SofarInverter(Device):
         self.energy = EnergyTotals(link)
         self.meter_energy = MeterEnergy(link)
         self.battery_energy = BatteryEnergy(link)
+        self.fault_log = FaultLog(link)
         self.rtc_sync = RtcSyncResult(link)
         self.feed_in = FeedInLimit(link)
         self.eps = EpsControl(link)
@@ -407,6 +410,7 @@ class SofarInverter(Device):
             self.inverter_type |= EPS
         self._readings = self._components_for(_READING_COMPONENTS)
         await self._async_drop_denied_components()
+        await self._async_drop_absent_fault_log()
         self._settings = self._components_for(_SETTING_COMPONENTS)
         self._settled = True
         _LOGGER.debug(
@@ -474,6 +478,26 @@ class SofarInverter(Device):
                     name,
                 )
                 self._readings.remove(name)
+
+    async def _async_drop_absent_fault_log(self) -> None:
+        """Stop polling the event log on a model that keeps none.
+
+        No mask covers it; an absent block times out or reads junk.
+        """
+        if "fault_log" not in self._readings:
+            return
+        try:
+            await self.fault_log.async_update(notify=False)
+        except ModbusConnectionError:
+            raise
+        except ModbusError as err:
+            reason = f"the event log does not answer: {err!r}"
+        else:
+            if self.fault_log.well_formed:
+                return
+            reason = "the event log reads as junk"
+        _LOGGER.debug("Inverter %s: %s, dropping fault_log", self.serial_number, reason)
+        self._readings.remove("fault_log")
 
     async def _async_probe_eps(self) -> bool:
         """Whether this inverter answers the off-grid (EPS) block."""
