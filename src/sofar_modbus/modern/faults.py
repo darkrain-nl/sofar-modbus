@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 
 
@@ -35,6 +36,15 @@ class Fault:
     id: int
     key: str
     category: FaultCategory
+
+
+@dataclass(frozen=True, slots=True)
+class FaultLogEntry:
+    """One fault in the inverter's historical event log."""
+
+    fault: Fault
+    occurred_at: datetime
+    """Naive, in the inverter's own clock."""
 
 
 FAULTS: tuple[Fault, ...] = (

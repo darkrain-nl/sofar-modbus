@@ -143,6 +143,7 @@ async def test_expected_components_come_from_the_type_before_setup(
         "energy",
         "meter_energy",
         "battery_energy",
+        "fault_log",
     )
     assert hybrid.expected_settings_components == (
         "rtc_sync",
@@ -169,7 +170,7 @@ async def test_expected_components_cover_both_polls(
     hybrid: SofarInverter,
 ) -> None:
     before = hybrid.expected_components
-    assert len(before) == 19
+    assert len(before) == 20
     assert {"grid", "feed_in"} <= before
 
     await hybrid.async_update()
@@ -234,12 +235,13 @@ async def test_setup_never_reads_the_serial_number(
     )
     await device._async_setup()
 
-    # The PV mask, rating, EPS probe and meter mask; never the serial.
+    # PV mask, rating, EPS probe, meter mask, event log; never the serial.
     assert [e.address for e in mock_modbus_unit.read_events] == [
         0x0580,
         0x06ED,
         0x0504,
         0x0680,
+        0x1480,
     ]
     assert device.serial_number == HYBRID_SERIAL
     assert device.model == "HYDxxKTL-3P"
@@ -865,7 +867,7 @@ async def test_detection_and_setup_log_what_they_found(
         "Inverter SP1ES12345678 is GEN|X3|HYBRID|EPS|PM|BAT_BTS, model HYDxxKTL-3P; "
         "readings: state, grid, offgrid, offgrid_three_phase, pv_1_2, "
         "battery_1_2, battery_3_8, battery_totals, energy, meter_energy, "
-        "battery_energy; "
+        "battery_energy, fault_log; "
         "settings: rtc_sync, feed_in, eps, battery_active_control, parallel, "
         "battery_config_id, battery_config, remote, active_power_control, "
         "charger, passive",

@@ -128,6 +128,22 @@ register map defines, and `FAULTS_BY_ID` indexes it. A register that has not
 been read yet contributes nothing, so `active_faults` never reports a fault the
 inverter did not actually answer for.
 
+The bitmasks only say what is wrong right now, so a fault that clears between
+two polls never shows. The inverter also keeps a log of every fault it raised,
+and `fault_log.entries` holds its newest ten, newest first:
+
+```python
+for entry in inverter.fault_log.entries:
+    print(entry.occurred_at, entry.fault.key)
+```
+
+`occurred_at` is naive, in the inverter's own clock. Unused slots and IDs not
+in `FAULTS` are left out. No address mask covers the log, so setup reads it
+once and stops polling it on a model that refuses it, answers junk, or stays
+silent through three tries. Once the log has answered, `has_fault_log` turns
+true: store it and pass it back as `SofarInverter(..., has_fault_log=True)`,
+and setup never drops the log again, whatever the link does that day.
+
 ### Numbered strings and corrected totals
 
 PV and battery strings are also reachable by number, as typed views that read

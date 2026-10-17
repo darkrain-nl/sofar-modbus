@@ -38,10 +38,12 @@ def covered(blocks: Iterable[ReadEvent], space: str = "holding") -> set[int]:
 
 
 def field_addresses(component: object) -> set[int]:
-    """Every address a component's declared fields occupy."""
+    """Every address a component's fields occupy, its slots included."""
+    parts = [component, *getattr(component, "slots", ())]
     return {
         field.address + offset
-        for field in component.declared_fields.values()  # type: ignore[attr-defined]
+        for part in parts
+        for field in part.resolved_fields.values()
         for offset in range(field.count)
     }
 
@@ -111,7 +113,7 @@ async def test_readings_and_settings_read_their_own_blocks(
     assert "energy" in readings.updated  # counters are measured, not configured
     assert {"feed_in", "charger", "battery_config"} <= settings.updated
     # Nearly a quarter of the poll a caller need not pay for every cycle.
-    assert sum(count for _, count in reading_blocks) == 241
+    assert sum(count for _, count in reading_blocks) == 281
     assert sum(count for _, count in setting_blocks) == 45
 
 
@@ -174,7 +176,7 @@ async def test_a_pv_only_inverter_never_touches_the_battery_registers(
     assert not read & set(range(0x0504, 0x0528))  # off-grid (EPS)
     assert read >= set(range(0x0684, 0x0694))  # a PV inverter still has energy
     # A single-phase PV inverter is a fraction of the hybrid's poll.
-    assert sum(b.count for b in blocks) == 145
+    assert sum(b.count for b in blocks) == 185
 
 
 async def test_the_extra_mppt_strings_are_only_read_where_they_exist(

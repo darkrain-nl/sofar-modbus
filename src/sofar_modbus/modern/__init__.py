@@ -54,7 +54,8 @@ from .enums import (
     SyncRtcResult,
     SystemState,
 )
-from .faults import FAULTS, FAULTS_BY_ID, Fault, FaultCategory
+from .fault_log import FaultLog
+from .faults import FAULTS, FAULTS_BY_ID, Fault, FaultCategory, FaultLogEntry
 from .inverter import GridOutput, Identity, InverterState
 from .masks import async_detect_type
 from .offgrid import OffGridSinglePhase, OffGridThreePhase, OffGridTotals
@@ -134,6 +135,8 @@ __all__ = [
     "Fault29",
     "Fault30",
     "FaultCategory",
+    "FaultLog",
+    "FaultLogEntry",
     "FeedInLimit",
     "FeedinLimitationMode",
     "GridOutput",

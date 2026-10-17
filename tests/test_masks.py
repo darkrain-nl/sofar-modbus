@@ -283,7 +283,13 @@ async def test_an_unknown_serial_takes_its_type_from_the_masks(
     device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
     await device.async_update()
     assert device.inverter_type == GEN | X3 | PV
-    assert device.readings_components == ("state", "grid", "pv_1_2", "energy")
+    assert device.readings_components == (
+        "state",
+        "grid",
+        "pv_1_2",
+        "energy",
+        "fault_log",
+    )
     assert device.model is None
 
 
@@ -330,6 +336,7 @@ async def test_a_hybrid_is_detected_from_its_battery_and_strings(
         "energy",
         "meter_energy",
         "battery_energy",
+        "fault_log",
     )
 
 
@@ -384,7 +391,8 @@ async def test_detection_reads_only_the_blocks_it_decides_on(
         for event in mock_modbus_unit.read_events
         if event.address & 0x3F == 0
     ]
-    assert masks_read == [0x0480, 0x0600, 0x0580, 0x0680]
+    # 0x1480 is the event log, which no mask covers.
+    assert masks_read == [0x0480, 0x0600, 0x0580, 0x0680, 0x1480]
 
 
 async def test_a_model_publishing_no_mask_stays_unknown(
@@ -578,6 +586,7 @@ async def test_detection_takes_an_unknown_serial_type_from_the_masks(
         "pv_1_2",
         "energy",
         "meter_energy",
+        "fault_log",
     )
 
 
