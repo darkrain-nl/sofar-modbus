@@ -73,6 +73,7 @@ from .rating import InverterRating
 from .settings import (
     ActivePowerControl,
     BatteryActiveControl,
+    BatteryChargeCutoff,
     BatteryConfig,
     BatteryConfigId,
     ChargerMode,
@@ -93,6 +94,7 @@ __all__ = [
     "BatConfigCellType",
     "BatConfigProtocol",
     "BatteryActiveControl",
+    "BatteryChargeCutoff",
     "BatteryConfig",
     "BatteryConfigId",
     "BatteryEnergy",

@@ -62,6 +62,12 @@ GATED_COMPONENTS: dict[str, int] = {
     "meter_energy": 0x0688,  # needs a meter at the PCC
 }
 
+# Components at addresses the spec reserves, polled only where the mask
+# declares them: without one their registers may read anything.
+DECLARED_COMPONENTS: dict[str, int] = {
+    "battery_charge_cutoff": 0x105B,
+}
+
 # Only a battery tower answers these; on anything else they time out.
 TOWER_MASK_BLOCKS: tuple[int, ...] = (
     0x9000,  # BMS system information
