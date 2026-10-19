@@ -235,13 +235,15 @@ async def test_setup_never_reads_the_serial_number(
     )
     await device._async_setup()
 
-    # PV mask, rating, EPS probe, meter mask, event log; never the serial.
+    # PV mask, rating, EPS probe, meter mask, event log, battery config
+    # mask; never the serial.
     assert [e.address for e in mock_modbus_unit.read_events] == [
         0x0580,
         0x06ED,
         0x0504,
         0x0680,
         0x1480,
+        0x1040,
     ]
     assert device.serial_number == HYBRID_SERIAL
     assert device.model == "HYDxxKTL-3P"
@@ -864,6 +866,8 @@ async def test_detection_and_setup_log_what_they_found(
         "Inverter SP1ES12345678 answers the off-grid block",
         "Inverter SP1ES12345678 publishes no usable mask for 0x0688, "
         "keeping meter_energy",
+        "Inverter SP1ES12345678 does not declare 0x105B in its mask, "
+        "dropping battery_charge_cutoff",
         "Inverter SP1ES12345678 is GEN|X3|HYBRID|EPS|PM|BAT_BTS, model HYDxxKTL-3P; "
         "readings: state, grid, offgrid, offgrid_three_phase, pv_1_2, "
         "battery_1_2, battery_3_8, battery_totals, energy, meter_energy, "

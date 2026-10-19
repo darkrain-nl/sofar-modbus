@@ -171,6 +171,15 @@ class BatteryConfig(SofarComponent):
     """BatConfig: Lead Acid Battery Float Voltage."""
 
 
+class BatteryChargeCutoff(SofarComponent):
+    """Charge limit of the selected battery, at a reserved address."""
+
+    applies_to = HYBRID
+
+    bat_config_charge_cutoff_soc = integer(0x105B, signed=False, unit="%")
+    """BatConfig: Charge Cut-off SOC."""
+
+
 class RemoteControl(SofarComponent):
     """Remote on/off switch."""
 

@@ -47,6 +47,7 @@ from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
 from .fault_log import FaultLog
 from .inverter import GridOutput, Identity, InverterState
 from .masks import (
+    DECLARED_COMPONENTS,
     GATED_COMPONENTS,
     MASK_BLOCKS,
     TOWER_MASK_BLOCKS,
@@ -69,6 +70,7 @@ from .rating import InverterRating
 from .settings import (
     ActivePowerControl,
     BatteryActiveControl,
+    BatteryChargeCutoff,
     BatteryConfig,
     BatteryConfigId,
     ChargerMode,
@@ -143,6 +145,7 @@ _SETTING_COMPONENTS = (
     "parallel",
     "battery_config_id",
     "battery_config",
+    "battery_charge_cutoff",
     "remote",
     "active_power_control",
     "charger",
@@ -255,6 +258,7 @@ class SofarInverter(Device):
         self.parallel = ParallelControl(link)
         self.battery_config_id = BatteryConfigId(link)
         self.battery_config = BatteryConfig(link)
+        self.battery_charge_cutoff = BatteryChargeCutoff(link)
         self.remote = RemoteControl(link)
         self.active_power_control = ActivePowerControl(link)
         self.charger = ChargerMode(link)
@@ -378,10 +382,17 @@ class SofarInverter(Device):
 
     @property
     def expected_settings_components(self) -> tuple[str, ...]:
-        """Settings components polled, or the type's before setup."""
+        """Settings components polled, or the type's before setup.
+
+        Before setup none is expected that only its mask can declare.
+        """
         if self._settled:
             return tuple(self._settings)
-        return tuple(self._components_for(_SETTING_COMPONENTS))
+        return tuple(
+            name
+            for name in self._components_for(_SETTING_COMPONENTS)
+            if name not in DECLARED_COMPONENTS
+        )
 
     @property
     def expected_readings_components(self) -> tuple[str, ...]:
@@ -424,6 +435,7 @@ class SofarInverter(Device):
         await self._async_drop_denied_components()
         await self._async_drop_absent_fault_log()
         self._settings = self._components_for(_SETTING_COMPONENTS)
+        await self._async_drop_undeclared_components()
         self._settled = True
         _LOGGER.debug(
             "Inverter %s is %s, model %s; readings: %s; settings: %s",
@@ -490,6 +502,21 @@ class SofarInverter(Device):
                     name,
                 )
                 self._readings.remove(name)
+
+    async def _async_drop_undeclared_components(self) -> None:
+        """Poll a component at a reserved address only where declared."""
+        for name, address in DECLARED_COMPONENTS.items():
+            if name not in self._settings:
+                continue
+            if await async_serves(self.modbus_unit, address):
+                continue
+            _LOGGER.debug(
+                "Inverter %s does not declare 0x%04X in its mask, dropping %s",
+                self.serial_number,
+                address,
+                name,
+            )
+            self._settings.remove(name)
 
     async def _async_drop_absent_fault_log(self) -> None:
         """Stop polling the event log on a model that keeps none.

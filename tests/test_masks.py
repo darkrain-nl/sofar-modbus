@@ -42,6 +42,11 @@ METERED_ENERGY_MASK = [0x0000, 0x0000, 0x000F, 0xFFFF]
 # A mask denying even its own four registers, so not a mask at all.
 SELF_DENYING_MASK = [0x0000, 0x0000, 0x0000, 0x00F0]
 
+# Captured from an ESI-10K-T1, declaring the reserved 0x105B.
+CHARGE_CUTOFF_MASK = [0x0068, 0xFE35, 0x0FFF, 0xFFFF]
+# The same block with 0x105B denied.
+NO_CHARGE_CUTOFF_MASK = [0x0068, 0xFE35, 0x07FF, 0xFFFF]
+
 # Every block this library reads registers from, spelled out so a change
 # to MASK_BLOCKS has to be made here too.
 MODELED_BLOCKS = [
@@ -274,6 +279,61 @@ async def test_a_model_without_the_component_is_not_asked(
     await device.async_update()
     assert "meter_energy" not in device.readings_components
     assert not any(event.address == 0x0680 for event in mock_modbus_unit.read_events)
+
+
+async def test_a_declared_charge_cutoff_is_polled(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    mock_modbus_unit.holding[0x1040] = CHARGE_CUTOFF_MASK
+    mock_modbus_unit.holding[0x105B] = [95]
+    assert "battery_charge_cutoff" not in hybrid.expected_settings_components
+    await hybrid.async_update()
+    assert "battery_charge_cutoff" in hybrid.expected_settings_components
+    assert hybrid.battery_charge_cutoff.bat_config_charge_cutoff_soc == 95
+
+
+async def test_a_denied_charge_cutoff_is_not_polled(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
+    mock_modbus_unit.holding[0x1040] = NO_CHARGE_CUTOFF_MASK
+    await hybrid.async_update()
+    assert "battery_charge_cutoff" not in hybrid.settings_components
+    assert not any(event.address == 0x105B for event in mock_modbus_unit.read_events)
+    assert (
+        "Inverter SP1ES12345678 does not declare 0x105B in its mask, "
+        "dropping battery_charge_cutoff" in caplog.messages
+    )
+
+
+@pytest.mark.parametrize(
+    "error", [IllegalDataAddressError(), ModbusTimeoutError("no answer")]
+)
+async def test_an_unanswered_mask_drops_the_charge_cutoff(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit, error: Exception
+) -> None:
+    """A reserved register may read anything where nothing declares it."""
+    mock_modbus_unit.holding[0x105B] = [95]
+    mock_modbus_unit.fail_read(0x1040, error)
+    await hybrid.async_update()
+    assert "battery_charge_cutoff" not in hybrid.settings_components
+
+
+async def test_a_self_denying_mask_drops_the_charge_cutoff(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    mock_modbus_unit.holding[0x1040] = SELF_DENYING_MASK
+    await hybrid.async_update()
+    assert "battery_charge_cutoff" not in hybrid.settings_components
+
+
+async def test_a_pv_inverter_is_not_asked_about_the_charge_cutoff(
+    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    await pv_inverter.async_update()
+    assert not any(event.address == 0x1040 for event in mock_modbus_unit.read_events)
 
 
 async def test_an_unknown_serial_takes_its_type_from_the_masks(
