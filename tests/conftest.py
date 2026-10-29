@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from modbus_connection.mock import MockModbusUnit
 
@@ -54,6 +56,17 @@ def fail_then(
             raise
 
     monkeypatch.setattr(unit, "read_holding_registers", read_then)
+
+
+def yield_before_reads(monkeypatch: pytest.MonkeyPatch, unit: MockModbusUnit) -> None:
+    """Let other tasks run before each read, as a real link does."""
+    read = unit.read_holding_registers
+
+    async def read_later(address: int, count: int) -> list[int]:
+        await asyncio.sleep(0)
+        return await read(address, count)
+
+    monkeypatch.setattr(unit, "read_holding_registers", read_later)
 
 
 # A three-phase HYD hybrid: selects HYBRID | X3 | GEN | BAT_BTS.

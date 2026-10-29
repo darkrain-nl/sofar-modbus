@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 
@@ -17,7 +18,7 @@ from modbus_connection.mock import MockModbusUnit
 from sofar_modbus import SofarInverter
 from sofar_modbus.modern import FAULTS_BY_ID, FaultLogEntry
 
-from .conftest import MODERN_HOLDING, fail_then
+from .conftest import MODERN_HOLDING, fail_then, yield_before_reads
 
 LOG = 0x1480
 
@@ -201,6 +202,19 @@ async def test_setup_drops_a_log_that_never_answers_for_this_run(
         and message.endswith("dropping fault_log")
         for message in caplog.messages
     )
+
+
+async def test_overlapping_polls_drop_an_absent_log_once(
+    ktlx: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Readings and settings both poll an inverter not yet set up."""
+    mock_modbus_unit.fail_read(LOG, ModbusTimeoutError("no such block"))
+    yield_before_reads(monkeypatch, mock_modbus_unit)
+    await asyncio.gather(ktlx.async_update_readings(), ktlx.async_update_settings())
+    assert "fault_log" not in ktlx.readings_components
+    assert _log_reads(mock_modbus_unit) == 3
 
 
 async def test_setup_drops_a_refused_log_at_once(

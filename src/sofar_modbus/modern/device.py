@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Iterable, Mapping
 from datetime import datetime
@@ -278,6 +279,7 @@ class SofarInverter(Device):
         self._readings: list[str] = []
         self._settings: list[str] = []
         self._settled = False
+        self._setup_lock = asyncio.Lock()
         self._unrecognized = False
         self._identity_pending = False
         self._packs_answering: dict[tuple[int, int], bool] = {}
@@ -415,6 +417,14 @@ class SofarInverter(Device):
             for name in names
             if matches(self.inverter_type, getattr(self, name).applies_to)
         ]
+
+    async def async_ensure_setup(self) -> None:
+        """Run setup once, one caller at a time.
+
+        Overlapping runs would edit each other's component lists.
+        """
+        async with self._setup_lock:
+            await super().async_ensure_setup()
 
     async def _async_setup(self) -> None:
         """Settle which optional sub-systems this inverter serves."""

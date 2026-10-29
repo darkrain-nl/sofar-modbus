@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import pytest
@@ -30,7 +31,12 @@ from sofar_modbus.variants import (
     InverterType,
 )
 
-from .conftest import HYBRID_SERIAL, MODERN_HOLDING, ascii_words
+from .conftest import (
+    HYBRID_SERIAL,
+    MODERN_HOLDING,
+    ascii_words,
+    yield_before_reads,
+)
 
 # Captured from a 4.4 KTLX-G3; pins the register order against hardware.
 GRID_OUTPUT_MASK = [0x1C00, 0x8218, 0x4308, 0x617F]
@@ -226,6 +232,21 @@ async def test_a_denied_meter_block_is_logged(
         "Inverter SP1ES12345678 denies 0x0688 in its mask, dropping meter_energy"
         in caplog.messages
     )
+
+
+async def test_overlapping_polls_drop_a_denied_meter_once(
+    pv_inverter: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Readings and settings both poll an inverter not yet set up."""
+    mock_modbus_unit.holding[0x0680] = UNMETERED_ENERGY_MASK
+    yield_before_reads(monkeypatch, mock_modbus_unit)
+    await asyncio.gather(
+        pv_inverter.async_update_readings(), pv_inverter.async_update_settings()
+    )
+    assert "meter_energy" not in pv_inverter.readings_components
+    assert sum(event.address == 0x0680 for event in mock_modbus_unit.read_events) == 1
 
 
 async def test_a_served_meter_block_is_polled(
