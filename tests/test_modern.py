@@ -14,9 +14,12 @@ from modbus_connection import (
     ServerDeviceFailureError,
 )
 from modbus_connection.mock import MockModbusUnit, WriteEvent
+from modbus_connection.model import Component, ComponentGroup, ManualComponent
 
 from sofar_modbus import SofarInverter
 from sofar_modbus.modern import (
+    READING_COMPONENTS,
+    SETTING_COMPONENTS,
     ChargerUseMode,
     EpsControlMode,
     Fault1,
@@ -217,6 +220,36 @@ async def test_readings_and_settings_polls_are_disjoint(
     assert not (settings.updated & readings.updated)
     assert not (settings.updated & set(readings.failed))
     assert not (set(settings.failed) & readings.updated)
+
+
+def test_every_polled_component_is_a_reading_or_a_setting(
+    hybrid: SofarInverter,
+) -> None:
+    """Callers route a component to its poll before setup settles it."""
+    assert not set(READING_COMPONENTS) & set(SETTING_COMPONENTS)
+    assert {
+        name
+        for name, value in vars(hybrid).items()
+        if isinstance(value, (Component, ComponentGroup, ManualComponent))
+    } == {
+        *READING_COMPONENTS,
+        *SETTING_COMPONENTS,
+        "identity",
+        "rating",
+        "battery_pack",
+    }
+
+
+async def test_each_poll_reads_only_its_own_components(
+    hybrid: SofarInverter,
+) -> None:
+    settings = await hybrid.async_update_settings()
+    readings = await hybrid.async_update_readings()
+
+    assert readings.updated
+    assert readings.updated | set(readings.failed) <= set(READING_COMPONENTS)
+    assert settings.updated
+    assert settings.updated | set(settings.failed) <= set(SETTING_COMPONENTS)
 
 
 async def test_setup_never_reads_the_serial_number(

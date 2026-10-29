@@ -11,6 +11,8 @@ from .battery_pack import BatteryPack
 from .device import (
     BATTERY_STRING_COMPONENTS,
     PV_STRING_COMPONENTS,
+    READING_COMPONENTS,
+    SETTING_COMPONENTS,
     SofarInverter,
     identify,
 )
@@ -90,6 +92,8 @@ __all__ = [
     "FAULTS",
     "FAULTS_BY_ID",
     "PV_STRING_COMPONENTS",
+    "READING_COMPONENTS",
+    "SETTING_COMPONENTS",
     "ActivePowerControl",
     "BatConfigCellType",
     "BatConfigProtocol",

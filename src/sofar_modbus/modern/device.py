@@ -118,7 +118,8 @@ BATTERY_STRING_COMPONENTS: Final[Mapping[int, str]] = MappingProxyType(
     {n: "battery_1_2" if n <= 2 else "battery_3_8" for n in range(1, 9)}
 )
 
-_READING_COMPONENTS = (
+# Every component the readings poll may read; setup narrows it.
+READING_COMPONENTS: Final[tuple[str, ...]] = (
     "state",
     "grid",
     "offgrid",
@@ -138,7 +139,8 @@ _READING_COMPONENTS = (
     "battery_energy",
     "fault_log",
 )
-_SETTING_COMPONENTS = (
+# Every component the settings poll may read; setup narrows it.
+SETTING_COMPONENTS: Final[tuple[str, ...]] = (
     "rtc_sync",
     "feed_in",
     "eps",
@@ -392,7 +394,7 @@ class SofarInverter(Device):
             return tuple(self._settings)
         return tuple(
             name
-            for name in self._components_for(_SETTING_COMPONENTS)
+            for name in self._components_for(SETTING_COMPONENTS)
             if name not in DECLARED_COMPONENTS
         )
 
@@ -401,7 +403,7 @@ class SofarInverter(Device):
         """Reading components polled, or the type's before setup."""
         if self._settled:
             return tuple(self._readings)
-        return tuple(self._components_for(_READING_COMPONENTS))
+        return tuple(self._components_for(READING_COMPONENTS))
 
     @property
     def expected_components(self) -> frozenset[str]:
@@ -441,10 +443,10 @@ class SofarInverter(Device):
             and await self._async_probe_eps()
         ):
             self.inverter_type |= EPS
-        self._readings = self._components_for(_READING_COMPONENTS)
+        self._readings = self._components_for(READING_COMPONENTS)
         await self._async_drop_denied_components()
         await self._async_drop_absent_fault_log()
-        self._settings = self._components_for(_SETTING_COMPONENTS)
+        self._settings = self._components_for(SETTING_COMPONENTS)
         await self._async_drop_undeclared_components()
         self._settled = True
         _LOGGER.debug(
