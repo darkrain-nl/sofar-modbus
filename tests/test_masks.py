@@ -277,16 +277,26 @@ async def test_a_self_denying_mask_is_not_trusted(
     assert "meter_energy" in pv_inverter.readings_components
 
 
-@pytest.mark.parametrize(
-    "error", [IllegalDataAddressError(), ModbusTimeoutError("no answer")]
-)
-async def test_an_unanswered_energy_block_keeps_the_meter_block(
-    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit, error: Exception
+async def test_a_refused_energy_mask_keeps_the_meter_block(
+    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
-    """A model that refuses or ignores the mask has not denied anything."""
-    mock_modbus_unit.fail_read(0x0680, error)
+    """A model that refuses the mask has not denied anything."""
+    mock_modbus_unit.fail_read(0x0680, IllegalDataAddressError())
     await pv_inverter.async_update()
     assert "meter_energy" in pv_inverter.readings_components
+
+
+async def test_a_missed_energy_mask_is_asked_again(
+    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A waking inverter can drop one read, which denies nothing yet."""
+    mock_modbus_unit.holding[0x0680] = UNMETERED_ENERGY_MASK
+    mock_modbus_unit.fail_read(0x0680, ModbusTimeoutError("waking"))
+    with pytest.raises(ModbusTimeoutError):
+        await pv_inverter.async_update()
+    mock_modbus_unit.fail_read(0x0680, None)
+    await pv_inverter.async_update()
+    assert "meter_energy" not in pv_inverter.readings_components
 
 
 async def test_a_model_without_the_component_is_not_asked(
@@ -329,17 +339,27 @@ async def test_a_denied_charge_cutoff_is_not_polled(
     )
 
 
-@pytest.mark.parametrize(
-    "error", [IllegalDataAddressError(), ModbusTimeoutError("no answer")]
-)
-async def test_an_unanswered_mask_drops_the_charge_cutoff(
-    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit, error: Exception
+async def test_a_refused_mask_drops_the_charge_cutoff(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
     """A reserved register may read anything where nothing declares it."""
     mock_modbus_unit.holding[0x105B] = [95]
-    mock_modbus_unit.fail_read(0x1040, error)
+    mock_modbus_unit.fail_read(0x1040, IllegalDataAddressError())
     await hybrid.async_update()
     assert "battery_charge_cutoff" not in hybrid.settings_components
+
+
+async def test_a_missed_charge_cutoff_mask_is_asked_again(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    mock_modbus_unit.holding[0x1040] = CHARGE_CUTOFF_MASK
+    mock_modbus_unit.holding[0x105B] = [95]
+    mock_modbus_unit.fail_read(0x1040, ModbusTimeoutError("waking"))
+    with pytest.raises(ModbusTimeoutError):
+        await hybrid.async_update()
+    mock_modbus_unit.fail_read(0x1040, None)
+    await hybrid.async_update()
+    assert "battery_charge_cutoff" in hybrid.settings_components
 
 
 async def test_a_self_denying_mask_drops_the_charge_cutoff(
@@ -621,13 +641,16 @@ async def test_a_known_serial_keeps_its_strings_without_a_higher_mask(
     assert "pv_3" not in device.readings_components
 
 
-async def test_an_unanswered_pv_mask_keeps_the_strings(
+async def test_a_missed_pv_mask_is_asked_again(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     device = known_inverter(mock_modbus_unit, ESI_10K_PV_MASK)
-    mock_modbus_unit.fail_read(0x0580, ModbusTimeoutError("no answer"))
+    mock_modbus_unit.fail_read(0x0580, ModbusTimeoutError("waking"))
+    with pytest.raises(ModbusTimeoutError):
+        await device.async_update()
+    mock_modbus_unit.fail_read(0x0580, None)
     await device.async_update()
-    assert "pv_3" not in device.readings_components
+    assert "pv_3" in device.readings_components
 
 
 async def test_the_top_string_tier_reads_no_pv_mask(

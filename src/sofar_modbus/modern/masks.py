@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
 from modbus_connection import (
@@ -122,10 +123,10 @@ async def _async_read_mask(unit: ModbusUnit, base: int) -> int | None:
 async def async_serves(unit: ModbusUnit, address: int) -> bool | None:
     """Whether the model declares ``address`` valid.
 
-    ``None`` when it publishes no usable mask, which decides nothing.
+    ``None`` when it publishes no usable mask; a timeout propagates.
     """
     base = address - address % BLOCK_SIZE
-    return _declares(await async_read_mask(unit, base), base, address)
+    return _declares(await _async_read_mask(unit, base), base, address)
 
 
 async def async_detect_type(unit: ModbusUnit) -> InverterType | None:
@@ -150,18 +151,21 @@ async def async_detect_type(unit: ModbusUnit) -> InverterType | None:
         return None
     detected = GEN | (X3 if three_phase else X1) | (HYBRID if hybrid else PV)
     detected |= tier
+    if not hybrid:
+        return detected
     # A tower's usable mask declares its own base; no tower times out.
-    if hybrid and await async_serves(unit, TOWER_MASK_BLOCKS[0]):
-        detected |= BAT_BTS
+    with contextlib.suppress(ModbusTimeoutError):
+        if await async_serves(unit, TOWER_MASK_BLOCKS[0]):
+            detected |= BAT_BTS
     return detected
 
 
 async def async_read_pv_tier(unit: ModbusUnit) -> InverterType | None:
     """The PV string tier the model declares, ``None`` if unusable.
 
-    ``InverterType(0)`` means strings 1 and 2 only.
+    ``InverterType(0)`` is strings 1 and 2 only; a timeout propagates.
     """
-    mask = await async_read_mask(unit, _PV_STRING_BLOCK)
+    mask = await _async_read_mask(unit, _PV_STRING_BLOCK)
     # Blocks that never answer can still publish an all-ones mask.
     if mask == _ALL_BITS:
         return None
