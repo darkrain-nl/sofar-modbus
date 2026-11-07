@@ -131,6 +131,7 @@ FOUR_STRING_PV_MASK = 0xFFFF  # 0x0584-0x058F
 FIVE_STRING_PV_MASK = 0x3FFFF  # 0x0584-0x0592
 TWO_BATTERY_MASK = 0x3FFFF  # 0x0604-0x0611
 TOWER_MASK = 0x0F
+TOWER_LAYOUT = 0x0101  # one group of one pack
 
 # An ESI-10K-T1 from a diagnostics download (sofar-modbus#66).
 ESI_SERIAL = "SH1ES1000000001"
@@ -492,6 +493,7 @@ async def test_a_hybrid_with_a_tower_mask_has_a_tower(
             0x9000: TOWER_MASK,
         },
     )
+    mock_modbus_unit.holding[0x900D] = TOWER_LAYOUT
     await device.async_update()
     assert device.has_battery_tower
 
@@ -616,6 +618,7 @@ async def test_a_busy_tower_mask_is_asked_again(
             0x9000: TOWER_MASK,
         },
     )
+    mock_modbus_unit.holding[0x900D] = TOWER_LAYOUT
     mock_modbus_unit.fail_read(0x9000, ServerDeviceBusyError())
     with pytest.raises(ServerDeviceBusyError):
         await device.async_update()
