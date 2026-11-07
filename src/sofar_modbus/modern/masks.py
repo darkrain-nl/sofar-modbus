@@ -6,6 +6,10 @@ import contextlib
 from typing import TYPE_CHECKING
 
 from modbus_connection import (
+    GatewayTargetError,
+    IllegalDataAddressError,
+    IllegalDataValueError,
+    IllegalFunctionError,
     ModbusConnectionError,
     ModbusError,
     ModbusTimeoutError,
@@ -102,17 +106,18 @@ async def async_read_mask(unit: ModbusUnit, base: int) -> int | None:
     """
     try:
         return await _async_read_mask(unit, base)
-    except ModbusTimeoutError:
+    except ModbusConnectionError:
+        raise
+    except ModbusError:
+        # One failing block must not cost the caller every other mask.
         return None
 
 
 async def _async_read_mask(unit: ModbusUnit, base: int) -> int | None:
-    """The block's mask, or ``None`` if refused; a timeout propagates."""
+    """The block's mask, or ``None`` if refused; other errors propagate."""
     try:
         registers = await unit.read_holding_registers(base, MASK_REGISTERS)
-    except (ModbusConnectionError, ModbusTimeoutError):
-        raise  # a dead or silent link is not an absent mask
-    except ModbusError:
+    except (IllegalFunctionError, IllegalDataAddressError, IllegalDataValueError):
         return None
     value = 0
     for register in registers:
@@ -123,7 +128,7 @@ async def _async_read_mask(unit: ModbusUnit, base: int) -> int | None:
 async def async_serves(unit: ModbusUnit, address: int) -> bool | None:
     """Whether the model declares ``address`` valid.
 
-    ``None`` when it publishes no usable mask; a timeout propagates.
+    ``None`` on a refusal or an unusable mask; other errors propagate.
     """
     base = address - address % BLOCK_SIZE
     return _declares(await _async_read_mask(unit, base), base, address)
@@ -153,17 +158,17 @@ async def async_detect_type(unit: ModbusUnit) -> InverterType | None:
     detected |= tier
     if not hybrid:
         return detected
-    # A tower's usable mask declares its own base; no tower times out.
-    with contextlib.suppress(ModbusTimeoutError):
+    # A tower's usable mask declares its own base; no tower stays silent.
+    with contextlib.suppress(ModbusTimeoutError, GatewayTargetError):
         if await async_serves(unit, TOWER_MASK_BLOCKS[0]):
             detected |= BAT_BTS
     return detected
 
 
 async def async_read_pv_tier(unit: ModbusUnit) -> InverterType | None:
-    """The PV string tier the model declares, ``None`` if unusable.
+    """The declared PV string tier, ``None`` if refused or unusable.
 
-    ``InverterType(0)`` is strings 1 and 2 only; a timeout propagates.
+    ``InverterType(0)`` is strings 1 and 2; other errors propagate.
     """
     mask = await _async_read_mask(unit, _PV_STRING_BLOCK)
     # Blocks that never answer can still publish an all-ones mask.
