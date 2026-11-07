@@ -6,10 +6,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import io
 import json
 import logging
-from contextlib import redirect_stdout
+import time
 
 from modbus_connection import ModbusError
 from modbus_connection.cli_helper import (
@@ -23,20 +22,19 @@ from sofar_modbus import (
     SofarComponentBase,
     SofarInverter,
     SofarLegacyInverter,
+    UpdateReport,
     matches,
 )
-from sofar_modbus.modern import BatteryPack, async_detect_type
+from sofar_modbus.modern import BATTERY_PACKS, BatteryPack, async_detect_type
 from sofar_modbus.tuning import LinkStats, TimedUnit
 
-# An inverter's RS-485 line, direct or through a socket:// device, and
-# the gateways answering Modbus TCP themselves. No ASCII: the library
-# does not support it. The tcp framings are deprecated spellings.
+# RTU lines and TCP gateways; no ASCII, and tcp framings are deprecated.
 CONNECTIONS = (("tcp", "rtu"), ("tcp", "socket"), ("serial", "rtu"))
 
 # The most registers one Modbus read may ask for.
 MAX_COUNT = 125
-# The tower's selection register takes groups and packs 0 to 15.
-MAX_INDEX = 16
+# The second poll starts at the pack the first left selected.
+PACK_SWEEPS = 2
 
 Inverter = SofarInverter | SofarLegacyInverter
 RegisterRead = tuple[int, int, list[int] | str]
@@ -50,8 +48,8 @@ EXAMPLES = """examples:
   uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
   # every register read, plus ranges the library does not model
   uv run script/query.py 192.168.1.50 --raw --registers 0x1480:40 --registers 0x2004
-  # a hybrid with a BTS tower, every pack included
-  uv run script/query.py 192.168.1.50 --packs
+  # a hybrid with a BTS tower, every pack included, with the reasons
+  uv run script/query.py 192.168.1.50 --packs --debug
 """
 
 
@@ -78,6 +76,11 @@ def _register_range(text: str) -> tuple[int, int]:
             f"{text!r} must read 1 to {MAX_COUNT} registers ending by 0xFFFF"
         )
     return start, length
+
+
+def _error(err: ModbusError) -> str:
+    # A timeout arrives with no message of its own.
+    return str(err) or type(err).__name__
 
 
 def _line(label: str, value: object) -> None:
@@ -114,7 +117,7 @@ async def _mask_type(unit: TimedUnit) -> str:
     try:
         detected = await async_detect_type(unit)
     except ModbusError as err:
-        return f"unreadable: {str(err) or type(err).__name__}"
+        return f"unreadable: {_error(err)}"
     return "no usable mask" if detected is None else str(detected.name)
 
 
@@ -127,47 +130,56 @@ async def _read_registers(
         try:
             values: list[int] | str = await unit.read_holding_registers(start, count)
         except ModbusError as err:
-            values = str(err) or type(err).__name__
+            values = _error(err)
         reads.append((start, count, values))
     return reads
 
 
-async def _read_pack(
-    inverter: SofarInverter, group_nr: int, pack_nr: int
-) -> tuple[str, BatteryPack | None]:
-    """One pack as printed text, and the pack if it answered."""
-    text = io.StringIO()
-    title = f"battery_pack group {group_nr} pack {pack_nr}"
-    try:
-        pack = await inverter.async_read_pack(pack_nr, group_nr)
-    except ModbusError as err:
-        text.write(f"{title}\n{'-' * len(title)}\n")
-        text.write(f"  {str(err) or type(err).__name__}\n")
-        return text.getvalue(), None
-    with redirect_stdout(text):
-        print_component(pack, title=title)
-    # A tower can ignore the selection and keep serving another pack.
-    if pack.pack_id is not None and pack.pack_id & 0x0FFF != group_nr << 8 | pack_nr:
-        text.write(
-            f"  the tower still serves group {pack.pack_id >> 8 & 0xF} "
-            f"pack {pack.pack_id & 0xFF}\n"
+async def _sweep_packs(inverter: SofarInverter, unit: TimedUnit) -> list[str]:
+    """Each pack poll's outcome, as Core's pack coordinator runs it."""
+    sweeps: list[str] = []
+    for number in range(1, PACK_SWEEPS + 1):
+        reads, started = unit.reads, time.monotonic()
+        report = await inverter.async_update_packs()
+        sweeps.append(
+            f"Pack poll {number}: {_outcome(report)}, "
+            f"{unit.reads - reads} Modbus reads, {time.monotonic() - started:.1f} s"
         )
-    return text.getvalue(), pack
+    return sweeps
 
 
-async def _read_packs(inverter: SofarInverter) -> list[str]:
-    """Every pack of every group, taken before the link closes."""
-    text, first = await _read_pack(inverter, 0, 0)
-    texts = [text]
-    if first is None:
-        return texts
-    groups = min(first.parallel_group_count or 1, MAX_INDEX)
-    per_group = min(first.packs_per_group or 1, MAX_INDEX)
-    for group_nr in range(groups):
-        for pack_nr in range(per_group):
-            if group_nr or pack_nr:
-                texts.append((await _read_pack(inverter, group_nr, pack_nr))[0])
-    return texts
+def _outcome(report: UpdateReport) -> str:
+    if BATTERY_PACKS in report.updated:
+        return "updated"
+    return f"failed: {_error(report.failed[BATTERY_PACKS])}"
+
+
+def _print_pack(pack: BatteryPack) -> None:
+    title = f"battery_pack group {pack.group_nr} pack {pack.pack_nr}"
+    if pack.answered:
+        print_component(pack, title=title)
+        return
+    print(f"{title}\n{'-' * len(title)}\n  did not answer")
+    # A tower can ignore the selection and keep serving another pack.
+    if pack.pack_id is not None and pack.pack_id & 0x0FFF != (
+        pack.group_nr << 8 | pack.pack_nr
+    ):
+        print(
+            f"  the tower still serves group {pack.pack_id >> 8 & 0xF} "
+            f"pack {pack.pack_id & 0xFF}"
+        )
+
+
+def _print_packs(inverter: SofarInverter, sweeps: list[str]) -> None:
+    print()
+    for sweep in sweeps:
+        print(sweep)
+    if (tower := inverter.battery_tower) is not None:
+        print()
+        print_component(tower, title="battery_tower")
+    for pack in inverter.battery_packs.values():
+        print()
+        _print_pack(pack)
 
 
 def _print_verdicts(inverter: SofarInverter, mask_type: str) -> None:
@@ -201,8 +213,7 @@ def _print_registers(reads: list[RegisterRead]) -> None:
 
 async def main() -> int:
     """Read one inverter and print it."""
-    # The backend logs a failed connect at ERROR with its traceback; the
-    # messages below say it in one line.
+    # Silence the backend's connect traceback; one line below says it.
     logging.getLogger().addHandler(logging.NullHandler())
 
     parser = argparse.ArgumentParser(
@@ -234,23 +245,30 @@ async def main() -> int:
     parser.add_argument(
         "--packs",
         action="store_true",
-        help="also read each BTS battery pack; selecting one writes the tower's "
-        "pack selection register (0x9020)",
+        help=f"also poll every BTS battery pack {PACK_SWEEPS} times; selecting "
+        "one writes the tower's pack selection register (0x9020)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="print the library's log, which says why each verdict was reached",
     )
     args = parser.parse_args()
+    if args.debug:
+        library_log = logging.getLogger("sofar_modbus")
+        library_log.setLevel(logging.DEBUG)
+        library_log.addHandler(logging.StreamHandler())
 
     try:
         connection = await connect_from_args(args)
     except ModbusError as err:
-        # A connect timeout arrives with no message of its own.
-        detail = str(err) or type(err).__name__
-        print(f"Could not connect to {args.target}: {detail}")
+        print(f"Could not connect to {args.target}: {_error(err)}")
         return 1
 
     timed = TimedUnit(connection.for_unit(args.unit))
     masks: dict[int, int] = {}
     mask_type = ""
-    packs: list[str] = []
+    sweeps: list[str] = []
     try:
         inverter: Inverter = (
             await SofarLegacyInverter.async_detect(timed)
@@ -268,11 +286,11 @@ async def main() -> int:
             and isinstance(inverter, SofarInverter)
             and inverter.has_battery_tower
         ):
-            packs = await _read_packs(inverter)
+            sweeps = await _sweep_packs(inverter, timed)
         registers = await _read_registers(timed, args.registers)
         raw = await inverter.async_read_raw() if args.raw else None
     except ModbusError as err:
-        print(f"Could not read the inverter: {str(err) or type(err).__name__}")
+        print(f"Could not read the inverter: {_error(err)}")
         # A poll that gave up is exactly when its timings are worth seeing.
         print(f"{timed.reads} Modbus reads, {_timings(timed.stats)}")
         return 1
@@ -291,10 +309,10 @@ async def main() -> int:
     if report.failed:
         print("\nFailed to read:")
         for name, error in report.failed.items():
-            print(f"  {name}: {str(error) or type(error).__name__}")
-    for text in packs:
-        print()
-        print(text, end="")
+            print(f"  {name}: {_error(error)}")
+    if sweeps:
+        assert isinstance(inverter, SofarInverter)  # only it has a tower
+        _print_packs(inverter, sweeps)
     if isinstance(inverter, SofarInverter):
         _print_masks(masks)
     _print_registers(registers)

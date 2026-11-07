@@ -246,27 +246,49 @@ strings. `supports_set_time` and `supports_iv_curve_scan` say whether this
 model takes them: the clock on PV and hybrid inverters, the scan on hybrids.
 
 A BTS battery tower multiplexes every pack onto one register block, so packs are
-read one at a time rather than polled:
+read one at a time, by their own call rather than by either poll:
 
 ```python
-if inverter.has_battery_tower:
-    pack = await inverter.async_read_pack(pack_nr=0)
-    print(pack.pack_serial_number, pack.soc, pack.cell_1_voltage)
+from sofar_modbus.modern import BATTERY_PACKS
+
+report = await inverter.async_update_packs()
+for (group_nr, pack_nr), pack in inverter.battery_packs.items():
+    if pack.answered:
+        print(group_nr, pack_nr, pack.pack_serial_number, pack.pack_soc)
 ```
 
-0x900D says which packs there are: its high byte, `parallel_group_count`, is
-how many groups run in parallel, and its low byte, `packs_per_group`, how many
-packs each group holds. Every pack is a group and a pack number, so iterate
-both: a tower of three groups of one pack reports 0x0301 and serves
-`group_nr` 0, 1 and 2, each as `pack_nr` 0. Once a pack answers,
+The serial prefix only says a model can take a tower: an `SH1` running a CAN
+battery still carries it. So setup reads the tower's layout once, and
+`has_battery_tower` reports whether it answered. A refusal means no tower, as
+does a layout of no packs, which another battery's BMS can answer, and so does
+silence, unless the caller stored an earlier verdict and passed it back
+as `SofarInverter(..., has_battery_tower=True)`; then the layout is read on the
+first `async_update_packs()` instead. `expected_components` names
+`BATTERY_PACKS` while a tower is settled, and neither `READING_COMPONENTS` nor
+`SETTING_COMPONENTS` does.
+
+`battery_tower` holds that layout: `model`, `bms_version`, and 0x900D, whose
+high byte, `parallel_group_count`, is how many groups run in parallel, and
+whose low byte, `packs_per_group`, how many packs each group holds.
+`battery_packs` has one `BatteryPack` per place in it, keyed by
+`(group_nr, pack_nr)` from 0: a tower of three groups of one pack reports
+0x0301 and serves `(0, 0)`, `(1, 0)` and `(2, 0)`. Once a pack answers,
 `packs_in_group` confirms the count from its own registers, and
 `cells_in_pack` says how many cells it has.
 
+Each `async_update_packs()` first reads which groups are online (0x9022, one
+bit per group), and selects only those, starting at the pack the tower last
+served so that one needs no write. A pack whose read fails, whose
+selection the tower ignores, or whose group is offline has `answered` False.
+The report names `BATTERY_PACKS` as updated when any pack answered, and as
+failed otherwise. A dropped link raises.
+
 Selecting a pack writes the selection register (0x9020), and the tower switches
-a moment later, so `async_read_pack()` waits up to about three seconds for
-`pack_id` to name the pack before reading. A tower that never switches is read
-anyway, so check `pack_id`. Asking for the pack a tower already serves writes
-nothing, so a tower that rejects the register still reports its current pack.
+a moment later, so a read waits up to about three seconds for `pack_id` to name
+the pack. Asking for the pack a tower already serves writes nothing, so a tower
+that rejects the register still reports its current pack. `async_read_pack()`
+reads one pack into the shared `battery_pack` instead; it reads a tower that
+never switched anyway, so check `answered`.
 
 For an issue report, `async_read_raw()` dumps every register the inverter reads
 undecoded, keyed by address space and address — every block a poll covers, for
@@ -283,7 +305,7 @@ the block's base address; bit *n* of a mask is `base + n`. It is worth having
 because an inverter answers a register it does not serve rather than refusing
 it, usually with zeros but not always, so the mask is the only dependable
 statement of what a model supports. Blocks answering no mask are left out, and
-the battery tower's blocks are only asked for when the inverter reports a tower,
+the battery tower's blocks are only asked for once setup has found a tower,
 since asking without one buys a timeout. The meter counters are dropped when
 the energy block's mask denies them, and an unrecognised serial takes its type
 from them.
@@ -303,8 +325,8 @@ uv run script/query.py socket://192.168.1.50:8899 --transport serial --unit 1
 uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
 # every register read, plus ranges the library does not model
 uv run script/query.py 192.168.1.50 --raw --registers 0x1480:40 --registers 0x2004
-# a hybrid with a BTS tower, every pack included
-uv run script/query.py 192.168.1.50 --packs
+# a hybrid with a BTS tower, every pack included, with the reasons
+uv run script/query.py 192.168.1.50 --packs --debug
 ```
 
 Which line fits depends on what sits between you and the inverter's RS-485
@@ -329,9 +351,13 @@ clock and IV-curve support), which decide what Home Assistant creates.
 `--registers ADDR[:COUNT]` reads any holding range raw, up to 125 registers
 per range, for checking a register the library does not model yet. All of
 these reads come after the poll, so they do not count towards its timings.
-`--packs` reads every pack of a BTS tower, which is not polled. Selecting a pack
-writes the tower's selection register (0x9020), so this is the one option that
-writes; without it the script only reads.
+`--packs` runs the pack poll twice, the way Home Assistant does every five
+minutes, and prints each poll's outcome, reads and time, then the tower's
+layout and every pack. The second poll starts at the pack the first left
+selected. Selecting a pack writes the tower's selection register (0x9020), so
+this is the one option that writes; without it the script only reads.
+`--debug` prints the library's log, which says why setup found a tower or not
+and why a pack did not answer.
 
 ## Naming the link
 
