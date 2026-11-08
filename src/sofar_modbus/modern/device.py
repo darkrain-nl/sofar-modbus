@@ -47,6 +47,7 @@ from .battery import (
 )
 from .battery_pack import BatteryPack, BatteryTower
 from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
+from .enums import BatConfigCellType, BatConfigProtocol, BatConfigWriteStatus
 from .fault_log import FaultLog
 from .inverter import GridOutput, Identity, InverterState
 from .masks import (
@@ -95,6 +96,28 @@ _SET_TIME_APPLIES_TO = PV | HYBRID
 _IV_CURVE_SCAN_REGISTER = 0x1027
 _IV_CURVE_SCAN_APPLIES_TO = HYBRID
 _PV_TIERS = MPPT3 | MPPT4 | MPPT6 | MPPT8 | MPPT10
+
+_BAT_CONFIG_REGISTER = BatteryConfigId.bat_config_id.address
+# The sheet documents 19 words to any 3PH communication battery.
+_BAT_CONFIG_WORDS = 19
+# 0x105B refuses a write unless it ends the block from 0x1044.
+_BAT_CONFIG_CHARGE_CUTOFF_WORDS = 24
+_BAT_CONFIG_PROTOCOL = BatteryConfigId.bat_config_protocol.address
+_BAT_CONFIG_CELL_TYPE = BatteryConfig.bat_config_cell_type.address
+# Lead-acid chemistries take a 23-word write that nobody has tested.
+_LEAD_ACID = frozenset(
+    {
+        BatConfigCellType.LEAD_ACID,
+        BatConfigCellType.AGM,
+        BatConfigCellType.GEL,
+        BatConfigCellType.FLOODED,
+    }
+)
+_BAT_CONFIG_CONTROL = 0x1053
+# 2 would reset the battery to its protocol's defaults.
+_BAT_CONFIG_COMMIT = 1
+_BAT_CONFIG_POLL_STEP = 0.5
+_BAT_CONFIG_POLLS = 20
 
 # Tries at the identity, enough to ride out a transient blip.
 _IDENTITY_ATTEMPTS = 3
@@ -188,6 +211,17 @@ _SERIAL_PREFIXES: tuple[tuple[str, InverterType, str | None], ...] = (
     ("SJ2", PV | X3, None),
     ("SS1", PV | X3 | GEN, None),
 )
+
+
+class BatteryConfigWriteError(ModbusError):
+    """The inverter did not take a battery config write."""
+
+    status: BatConfigWriteStatus | None
+    """The reported failure; ``None`` when the status cannot tell."""
+
+    def __init__(self, message: str, status: BatConfigWriteStatus | None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 def identify(serial: str) -> tuple[InverterType, str | None]:
@@ -294,6 +328,7 @@ class SofarInverter(Device):
         self._settings: list[str] = []
         self._settled = False
         self._setup_lock = asyncio.Lock()
+        self._battery_config_lock = asyncio.Lock()
         self._unrecognized = False
         self._identity_pending = False
         self._packs_answering: dict[tuple[int, int], bool] = {}
@@ -951,6 +986,138 @@ class SofarInverter(Device):
     async def async_start_iv_curve_scan(self) -> None:
         """Ask the inverter to sweep its PV strings' I-V curves."""
         await self.modbus_unit.write_register(_IV_CURVE_SCAN_REGISTER, 1)
+
+    async def async_write_battery_cutoffs(
+        self,
+        on_grid_discharge_cutoff_soc: int,
+        off_grid_discharge_cutoff_soc: int,
+        off_grid_recovery_soc: int,
+        charge_cutoff_soc: int | None = None,
+    ) -> None:
+        """Set the battery cut-offs, in the SofarCloud app's terms.
+
+        Each change is a stored write, so not for frequent automations.
+        """
+        # SofarCloud's ranges; on-grid 100 stores DOD 0, below the spec's 1.
+        if not 10 <= on_grid_discharge_cutoff_soc <= 100:
+            raise ValueError(
+                f"on-grid cut-off {on_grid_discharge_cutoff_soc}% is outside 10-100"
+            )
+        if not 10 <= off_grid_discharge_cutoff_soc <= 30:
+            raise ValueError(
+                f"off-grid cut-off {off_grid_discharge_cutoff_soc}% is outside 10-30"
+            )
+        if on_grid_discharge_cutoff_soc < off_grid_discharge_cutoff_soc:
+            raise ValueError("the on-grid cut-off is below the off-grid one")
+        if not (off_grid_discharge_cutoff_soc + 5 <= off_grid_recovery_soc <= 100):
+            raise ValueError(
+                f"off-grid recovery {off_grid_recovery_soc}% is not between "
+                f"5 above the off-grid cut-off and 100"
+            )
+        # SofarCloud's range; the spec reserves 0x105B, so it says nothing.
+        if charge_cutoff_soc is not None and not 60 <= charge_cutoff_soc <= 100:
+            raise ValueError(f"charge cut-off {charge_cutoff_soc}% is outside 60-100")
+        await self.async_ensure_setup()
+        if "battery_config" not in self._settings:
+            raise ValueError(f"inverter {self.serial_number} has no battery config")
+        if X1 in self.inverter_type:
+            raise ValueError("battery config writes are untested on single-phase")
+        wanted = {
+            BatteryConfig.bat_config_depth_of_discharge.address: (
+                100 - on_grid_discharge_cutoff_soc
+            ),
+            BatteryConfig.bat_config_end_of_discharge.address: (
+                100 - off_grid_discharge_cutoff_soc
+            ),
+            BatteryConfig.bat_config_eps_buffer.address: (
+                off_grid_recovery_soc - off_grid_discharge_cutoff_soc
+            ),
+        }
+        count = _BAT_CONFIG_WORDS
+        if charge_cutoff_soc is not None:
+            if "battery_charge_cutoff" not in self._settings:
+                raise ValueError(
+                    f"inverter {self.serial_number} does not declare a charge cut-off"
+                )
+            wanted[BatteryChargeCutoff.bat_config_charge_cutoff_soc.address] = (
+                charge_cutoff_soc
+            )
+            count = _BAT_CONFIG_CHARGE_CUTOFF_WORDS
+        async with self._battery_config_lock:
+            await self._async_write_battery_config(wanted, count)
+
+    async def _async_write_battery_config(
+        self, wanted: Mapping[int, int], count: int
+    ) -> None:
+        """Write ``wanted`` over a fresh read, then check that it took.
+
+        A stale success status looks like a fresh one, so read back.
+        """
+        current = await self._async_read_battery_config(count)
+        # A BTS 5K reads cell type 0, a default its protocol ignores.
+        if (
+            current[_BAT_CONFIG_CELL_TYPE] in _LEAD_ACID
+            and current[_BAT_CONFIG_PROTOCOL] != BatConfigProtocol.BTS_5K
+        ):
+            raise ValueError("battery config writes are untested on lead-acid")
+        if _holds(current, wanted):
+            _LOGGER.debug(
+                "Inverter %s: battery cut-offs already set, not writing",
+                self.serial_number,
+            )
+            return
+        await self.modbus_unit.write_registers(
+            _BAT_CONFIG_REGISTER,
+            list(
+                {
+                    **current,
+                    **wanted,
+                    _BAT_CONFIG_CONTROL: _BAT_CONFIG_COMMIT,
+                }.values()
+            ),
+        )
+        if (status := await self._async_battery_config_status()) != (
+            BatConfigWriteStatus.SUCCESS
+        ):
+            raise BatteryConfigWriteError(
+                f"inverter {self.serial_number} reports {status.name}", status
+            )
+        if not _holds(await self._async_read_battery_config(count), wanted):
+            raise BatteryConfigWriteError(
+                f"inverter {self.serial_number} kept its old battery config", None
+            )
+
+    async def _async_read_battery_config(self, count: int) -> dict[int, int]:
+        """``count`` battery config words from 0x1044, keyed by address."""
+        return dict(
+            enumerate(
+                await self.modbus_unit.read_holding_registers(
+                    _BAT_CONFIG_REGISTER, count
+                ),
+                _BAT_CONFIG_REGISTER,
+            )
+        )
+
+    async def _async_battery_config_status(self) -> BatConfigWriteStatus:
+        """The commit's status once the inverter stops reporting busy."""
+        for _ in range(_BAT_CONFIG_POLLS):
+            [word] = await self.modbus_unit.read_holding_registers(
+                _BAT_CONFIG_CONTROL, 1
+            )
+            if word not in BatConfigWriteStatus:
+                raise BatteryConfigWriteError(
+                    f"inverter {self.serial_number} reports status 0x{word:04X}",
+                    None,
+                )
+            if word != BatConfigWriteStatus.BUSY:
+                return BatConfigWriteStatus(word)
+            await asyncio.sleep(_BAT_CONFIG_POLL_STEP)
+        return BatConfigWriteStatus.BUSY
+
+
+def _holds(words: Mapping[int, int], wanted: Mapping[int, int]) -> bool:
+    """Whether ``words`` already hold every ``wanted`` value."""
+    return all(words[address] == value for address, value in wanted.items())
 
 
 def _both_attempts(
