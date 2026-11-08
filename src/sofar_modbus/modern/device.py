@@ -10,7 +10,9 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Self
 
 from modbus_connection import (
+    GatewayTargetError,
     IllegalDataAddressError,
+    IllegalDataValueError,
     IllegalFunctionError,
     ModbusConnectionError,
     ModbusError,
@@ -43,7 +45,7 @@ from .battery import (
     BatteryStrings3To8,
     BatteryTotals,
 )
-from .battery_pack import BatteryPack
+from .battery_pack import BatteryPack, BatteryTower
 from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
 from .fault_log import FaultLog
 from .inverter import GridOutput, Identity, InverterState
@@ -99,6 +101,11 @@ _IDENTITY_ATTEMPTS = 3
 # Tries at the fault log before its silence counts as absence.
 _FAULT_LOG_ATTEMPTS = 3
 
+_ONLINE_GROUPS_REGISTER = 0x9022  # bit n set: group n answers the BMS
+_REFUSALS = (IllegalFunctionError, IllegalDataAddressError, IllegalDataValueError)
+# The inquiry word addresses groups and packs in four bits each.
+_ADDRESSABLE = 16
+
 # Keys are the valid numbers; values name the component polling each.
 PV_STRING_COMPONENTS: Final[Mapping[int, str]] = MappingProxyType(
     {
@@ -117,6 +124,8 @@ PV_STRING_COMPONENTS: Final[Mapping[int, str]] = MappingProxyType(
 BATTERY_STRING_COMPONENTS: Final[Mapping[int, str]] = MappingProxyType(
     {n: "battery_1_2" if n <= 2 else "battery_3_8" for n in range(1, 9)}
 )
+# Polled by async_update_packs(), apart from readings and settings.
+BATTERY_PACKS: Final = "battery_packs"
 
 # Every component the readings poll may read; setup narrows it.
 READING_COMPONENTS: Final[tuple[str, ...]] = (
@@ -208,6 +217,7 @@ class SofarInverter(Device):
         read_pm: bool = False,
         timeout: float | None = None,
         has_fault_log: bool = False,
+        has_battery_tower: bool = False,
     ) -> None:
         """Set up the sub-systems.
 
@@ -268,6 +278,8 @@ class SofarInverter(Device):
         self.passive = PassiveMode(link)
         # Read via async_read_pack(), one pack at a time; never in the poll.
         self.battery_pack = BatteryPack(link)
+        self._battery_tower = BatteryTower(link)
+        self._battery_packs: dict[tuple[int, int], BatteryPack] = {}
 
         self._pv_strings = {
             number: PvString(number, name, getattr(self, name))
@@ -285,7 +297,12 @@ class SofarInverter(Device):
         self._unrecognized = False
         self._identity_pending = False
         self._packs_answering: dict[tuple[int, int], bool] = {}
+        # The pack the tower last served, so a sweep can skip a write.
+        self._served_place: tuple[int, int] | None = None
+        # Every pack shares the one selection register.
+        self._pack_lock = asyncio.Lock()
         self._has_fault_log = has_fault_log
+        self._has_battery_tower = has_battery_tower
 
     @classmethod
     async def async_detect(
@@ -339,8 +356,23 @@ class SofarInverter(Device):
 
     @property
     def has_battery_tower(self) -> bool:
-        """Whether this inverter reports a BTS battery tower."""
+        """Whether a BTS battery tower answered setup; store it across runs.
+
+        Passed back, it keeps a tower whose setup probe times out.
+        """
+        if self._settled:
+            return self._has_battery_tower
         return BAT_BTS in self.inverter_type
+
+    @property
+    def battery_tower(self) -> BatteryTower | None:
+        """The BTS battery tower, ``None`` without one."""
+        return self._battery_tower if self.has_battery_tower else None
+
+    @property
+    def battery_packs(self) -> Mapping[tuple[int, int], BatteryPack]:
+        """Each BTS pack by (group_nr, pack_nr), once the layout is read."""
+        return MappingProxyType(self._battery_packs if self.has_battery_tower else {})
 
     @property
     def supports_set_time(self) -> bool:
@@ -408,9 +440,12 @@ class SofarInverter(Device):
     @property
     def expected_components(self) -> frozenset[str]:
         """Every component polled, or the type's before setup."""
-        return frozenset(self.expected_readings_components) | frozenset(
+        polled = frozenset(self.expected_readings_components) | frozenset(
             self.expected_settings_components
         )
+        if self.has_battery_tower:
+            return polled | {BATTERY_PACKS}
+        return polled
 
     def _components_for(self, names: tuple[str, ...]) -> list[str]:
         """The components among ``names`` this inverter's type applies to."""
@@ -443,6 +478,7 @@ class SofarInverter(Device):
             and await self._async_probe_eps()
         ):
             self.inverter_type |= EPS
+        self._has_battery_tower = await self._async_probe_battery_tower()
         self._readings = self._components_for(READING_COMPONENTS)
         await self._async_drop_denied_components()
         await self._async_drop_absent_fault_log()
@@ -575,6 +611,61 @@ class SofarInverter(Device):
             return False
         _LOGGER.debug("Inverter %s answers the off-grid block", self.serial_number)
         return True
+
+    async def _async_probe_battery_tower(self) -> bool:
+        """Whether a BTS tower answers; silence keeps the stored verdict.
+
+        A tower-typed hybrid may run another battery over CAN instead.
+        """
+        if BAT_BTS not in self.inverter_type:
+            return False
+        try:
+            laid_out = await self._async_read_tower_layout()
+        except _REFUSALS as err:
+            _LOGGER.debug(
+                "Inverter %s refuses the battery tower block: %s",
+                self.serial_number,
+                err,
+            )
+            return False
+        # A gateway reports the tower's silence as a target failure.
+        except (ModbusTimeoutError, GatewayTargetError) as err:
+            _LOGGER.debug(
+                "Inverter %s: the battery tower does not answer, %s it: %r",
+                self.serial_number,
+                "keeping" if self._has_battery_tower else "dropping",
+                err,
+            )
+            return self._has_battery_tower
+        if laid_out:
+            _LOGGER.debug(
+                "Inverter %s answers the battery tower block", self.serial_number
+            )
+        return laid_out
+
+    async def _async_read_tower_layout(self) -> bool:
+        """Make one pack per place in the layout; whether there is any.
+
+        Another battery's BMS can answer the block with zeros.
+        """
+        await self._battery_tower.async_update(notify=False)
+        groups = self._battery_tower.parallel_group_count
+        packs = self._battery_tower.packs_per_group
+        assert groups is not None and packs is not None  # bits declare no nan
+        self._battery_packs = {
+            (group_nr, pack_nr): BatteryPack(
+                self._link, group_nr=group_nr, pack_nr=pack_nr
+            )
+            for group_nr in range(min(groups, _ADDRESSABLE))
+            for pack_nr in range(min(packs, _ADDRESSABLE))
+        }
+        if self._battery_packs:
+            return True
+        _LOGGER.debug(
+            "Inverter %s: the battery tower block lays out no packs, dropping it",
+            self.serial_number,
+        )
+        return False
 
     async def async_read_identity(self) -> None:
         """Read the firmware versions, never failing over them.
@@ -710,29 +801,111 @@ class SofarInverter(Device):
         return masks
 
     async def async_read_pack(self, pack_nr: int, group_nr: int = 0) -> BatteryPack:
-        """Select a BTS pack and read it.
+        """Select a BTS pack and read it into ``battery_pack``.
 
-        Check ``pack_id``: a not-yet-switched tower still answers.
+        Check ``answered``: a not-yet-switched tower still answers.
+        """
+        async with self._pack_lock:
+            self.battery_pack.group_nr = group_nr
+            self.battery_pack.pack_nr = pack_nr
+            await self._async_read_pack(self.battery_pack)
+            self.battery_pack.notify()
+        return self.battery_pack
+
+    async def async_update_packs(self) -> UpdateReport:
+        """Refresh each pack of the BTS battery tower, one at a time.
+
+        A failing pack clears its own ``answered``; the rest still read.
+        """
+        await self.async_ensure_setup()
+        if not self.has_battery_tower:
+            return UpdateReport()
+        async with self._pack_lock:
+            return await self._async_read_packs()
+
+    async def _async_read_packs(self) -> UpdateReport:
+        """Read every online pack, notifying those that answered."""
+        for pack in self._battery_packs.values():
+            pack.answered = False
+        try:
+            if (
+                self._battery_tower.parallel_group_count is None
+                and not await self._async_read_tower_layout()
+            ):
+                self._has_battery_tower = False
+                return UpdateReport(
+                    failed={BATTERY_PACKS: ModbusError("the tower lays out no packs")}
+                )
+            online = await self._async_read_online_groups()
+        except ModbusConnectionError:
+            raise
+        except ModbusError as err:
+            return UpdateReport(failed={BATTERY_PACKS: err})
+        failure = ModbusError("no battery pack answered")
+        for pack in self._sweep_order():
+            if not online >> pack.group_nr & 1:
+                self._note_pack(pack.pack_nr, pack.group_nr, "its group is offline")
+                continue
+            try:
+                await self._async_read_pack(pack)
+            except ModbusConnectionError:
+                raise
+            except ModbusError as err:
+                failure = err
+        if not any(pack.answered for pack in self._battery_packs.values()):
+            return UpdateReport(failed={BATTERY_PACKS: failure})
+        for pack in self._battery_packs.values():
+            if pack.answered:
+                pack.notify()
+        return UpdateReport({BATTERY_PACKS})
+
+    def _sweep_order(self) -> list[BatteryPack]:
+        """Every pack, from the one the tower serves, which needs no write."""
+        packs = list(self._battery_packs.values())
+        start = (
+            list(self._battery_packs).index(self._served_place)
+            if self._served_place in self._battery_packs
+            else 0
+        )
+        return packs[start:] + packs[:start]
+
+    async def _async_read_online_groups(self) -> int:
+        """The tower's online-group bitmap, every group if it has none.
+
+        Towers older than the bitmap refuse it; selection still checks.
         """
         try:
-            await self.battery_pack.async_select(pack_nr, group_nr)
-            await self.battery_pack.async_update()
+            return (
+                await self.modbus_unit.read_holding_registers(
+                    _ONLINE_GROUPS_REGISTER, 1
+                )
+            )[0]
+        except _REFUSALS:
+            return (1 << _ADDRESSABLE) - 1
+
+    async def _async_read_pack(self, pack: BatteryPack) -> None:
+        """Select ``pack`` and read it, flagging whether the tower served it."""
+        pack.answered = False
+        try:
+            await pack.async_select(pack.pack_nr, pack.group_nr)
+            await pack.async_update(notify=False)
         except ModbusConnectionError:
             raise  # a dead link says nothing about the pack
         except ModbusError as err:
-            self._note_pack(pack_nr, group_nr, repr(err))
+            self._note_pack(pack.pack_nr, pack.group_nr, repr(err))
             raise
-        served = self.battery_pack.pack_id
+        served = pack.pack_id
         assert served is not None  # pack_id declares no nan
-        if served & 0x0FFF == group_nr << 8 | pack_nr:
-            self._note_pack(pack_nr, group_nr, None)
+        pack.answered = served & 0x0FFF == pack.group_nr << 8 | pack.pack_nr
+        if pack.answered:
+            self._served_place = pack.group_nr, pack.pack_nr
+            self._note_pack(pack.pack_nr, pack.group_nr, None)
         else:
             self._note_pack(
-                pack_nr,
-                group_nr,
+                pack.pack_nr,
+                pack.group_nr,
                 f"the tower serves pack {served & 0xFF} of group {served >> 8 & 0xF}",
             )
-        return self.battery_pack
 
     def _note_pack(self, pack_nr: int, group_nr: int, silence: str | None) -> None:
         """Log a pack starting or stopping to answer."""

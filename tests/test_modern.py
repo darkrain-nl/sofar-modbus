@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from unittest.mock import AsyncMock
 
 import pytest
 from modbus_connection import (
@@ -18,6 +19,7 @@ from modbus_connection.model import Component, ComponentGroup, ManualComponent
 
 from sofar_modbus import SofarInverter
 from sofar_modbus.modern import (
+    BATTERY_PACKS,
     READING_COMPONENTS,
     SETTING_COMPONENTS,
     ChargerUseMode,
@@ -173,14 +175,14 @@ async def test_expected_components_cover_both_polls(
     hybrid: SofarInverter,
 ) -> None:
     before = hybrid.expected_components
-    assert len(before) == 20
-    assert {"grid", "feed_in"} <= before
+    assert len(before) == 21
+    assert {"grid", "feed_in", BATTERY_PACKS} <= before
 
     await hybrid.async_update()
 
     assert hybrid.expected_components == frozenset(
         hybrid.readings_components + hybrid.settings_components
-    )
+    ) | {BATTERY_PACKS}
     assert hybrid.expected_components - before == {
         "offgrid",
         "offgrid_three_phase",
@@ -237,6 +239,7 @@ def test_every_polled_component_is_a_reading_or_a_setting(
         "identity",
         "rating",
         "battery_pack",
+        "_battery_tower",
     }
 
 
@@ -268,12 +271,13 @@ async def test_setup_never_reads_the_serial_number(
     )
     await device._async_setup()
 
-    # PV mask, rating, EPS probe, meter mask, event log, battery config
-    # mask; never the serial.
+    # PV mask, rating, EPS probe, tower probe, meter mask, event log,
+    # battery config mask; never the serial.
     assert [e.address for e in mock_modbus_unit.read_events] == [
         0x0580,
         0x06ED,
         0x0504,
+        0x9007,
         0x0680,
         0x1480,
         0x1040,
@@ -843,9 +847,22 @@ async def test_a_slow_tower_is_given_time_to_switch(
     monkeypatch.setattr(battery_pack, "sleep", settle)
     pack = await hybrid.async_read_pack(pack_nr=0, group_nr=1)
     assert pack.pack_id == 1 << 8
-    pack_id_reads = [e for e in mock_modbus_unit.read_events if e.address == 0x9044]
-    # The check before the write, three while settling, then the block.
-    assert len(pack_id_reads) == 5
+    # Before the write, right after it, three settling, then the block.
+    assert len([e for e in mock_modbus_unit.read_events if e.address == 0x9044]) == 6
+
+
+async def test_a_tower_switching_with_the_write_is_read_at_once(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A frozen test clock never returns from the settle sleep."""
+    serve_selections(mock_modbus_unit)
+    settle = AsyncMock()
+    monkeypatch.setattr(battery_pack, "sleep", settle)
+
+    assert (await hybrid.async_read_pack(pack_nr=0, group_nr=1)).answered
+    settle.assert_not_awaited()
 
 
 async def test_a_tower_that_never_switches_is_read_anyway(
@@ -854,8 +871,10 @@ async def test_a_tower_that_never_switches_is_read_anyway(
     """The caller learns it from ``pack_id``, not from an error."""
     pack = await hybrid.async_read_pack(pack_nr=0, group_nr=1)
     assert pack.pack_id == 0
-    pack_id_reads = [e for e in mock_modbus_unit.read_events if e.address == 0x9044]
-    assert len(pack_id_reads) == 1 + battery_pack._SETTLE_STEPS + 1
+    assert (
+        len([e for e in mock_modbus_unit.read_events if e.address == 0x9044])
+        == 1 + 1 + battery_pack._SETTLE_STEPS + 1
+    )
 
 
 async def test_selecting_outside_the_addressable_range_is_refused(
@@ -872,6 +891,8 @@ async def test_the_battery_tower_is_never_part_of_a_poll(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
     """Packs share one register block, so a poll cannot read them all."""
+    await hybrid.async_ensure_setup()
+    mock_modbus_unit.read_events.clear()
     report = await hybrid.async_update()
     assert "battery_pack" not in report.updated
     assert not any(b.address >= 0x9000 for b in mock_modbus_unit.read_events)
@@ -897,6 +918,8 @@ async def test_detection_and_setup_log_what_they_found(
     assert _logged(caplog) == [
         "Serial SP1ES12345678 identifies as GEN|X3|HYBRID|BAT_BTS, model HYDxxKTL-3P",
         "Inverter SP1ES12345678 answers the off-grid block",
+        "Inverter SP1ES12345678: the battery tower block lays out no packs, "
+        "dropping it",
         "Inverter SP1ES12345678 publishes no usable mask for 0x0688, "
         "keeping meter_energy",
         "Inverter SP1ES12345678 does not declare 0x105B in its mask, "

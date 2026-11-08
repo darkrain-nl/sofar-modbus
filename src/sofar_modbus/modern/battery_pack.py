@@ -1,14 +1,18 @@
-"""A BTS battery tower's packs, the 0x9000 block, one pack read at a time."""
+"""Support for BTS battery towers and their packs."""
 
 from __future__ import annotations
 
 from asyncio import sleep
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from modbus_connection.model import bits, gauge, integer, string, uint32
 
 from ..model import SofarComponent
 from ..variants import BAT_BTS
+
+if TYPE_CHECKING:
+    from modbus_connection import ModbusUnit
 
 _BMS_INQUIRE_REGISTER = 0x9020  # selects which pack 0x9044+ reports
 _PACK_ID_REGISTER = 0x9044  # which pack it reports right now
@@ -16,6 +20,20 @@ _PACK_ID_REGISTER = 0x9044  # which pack it reports right now
 # The tower switches packs a moment after the write, not with it.
 _SETTLE_STEP = 0.3  # seconds between pack_id checks
 _SETTLE_STEPS = 10  # checks before reading whatever it serves
+
+
+class BatteryTower(SofarComponent):
+    """Describe a BTS battery tower's layout."""
+
+    applies_to = BAT_BTS
+    register_ranges = ((0x9007, 0x900D),)
+
+    model = string(0x9007, 4)
+    bms_version = integer(0x900B, signed=False)
+    parallel_group_count = bits(0x900D, 8, 8)
+    """Battery groups running in parallel (high byte of 0x900D)."""
+    packs_per_group = bits(0x900D, 0, 8)
+    """Packs in each group (low byte of 0x900D)."""
 
 
 class BatteryPack(SofarComponent):
@@ -93,6 +111,56 @@ class BatteryPack(SofarComponent):
     cells_in_pack = integer(0x907C, signed=False)
     """How many cells this pack has in series."""
 
+    def __init__(
+        self, unit: ModbusUnit, *, group_nr: int = 0, pack_nr: int = 0
+    ) -> None:
+        """Initialize the pack."""
+        super().__init__(unit)
+        self.group_nr = group_nr
+        self.pack_nr = pack_nr
+        self.answered = False
+        """Whether the last read succeeded and served this pack."""
+
+    @property
+    def cell_voltages(self) -> tuple[float | None, ...]:
+        """Cell voltages in order; index 0 is cell 1."""
+        return (
+            self.cell_1_voltage,
+            self.cell_2_voltage,
+            self.cell_3_voltage,
+            self.cell_4_voltage,
+            self.cell_5_voltage,
+            self.cell_6_voltage,
+            self.cell_7_voltage,
+            self.cell_8_voltage,
+            self.cell_9_voltage,
+            self.cell_10_voltage,
+            self.cell_11_voltage,
+            self.cell_12_voltage,
+            self.cell_13_voltage,
+            self.cell_14_voltage,
+            self.cell_15_voltage,
+            self.cell_16_voltage,
+            self.cell_17_voltage,
+            self.cell_18_voltage,
+            self.cell_19_voltage,
+            self.cell_20_voltage,
+            self.cell_21_voltage,
+            self.cell_22_voltage,
+            self.cell_23_voltage,
+            self.cell_24_voltage,
+        )
+
+    @property
+    def cell_temperatures(self) -> tuple[float | None, ...]:
+        """Cell temperature sensors 1 to 4 in order."""
+        return (
+            self.pack_temperature_1,
+            self.pack_temperature_2,
+            self.pack_temperature_3,
+            self.pack_temperature_4,
+        )
+
     @property
     def pack_time(self) -> datetime | None:
         """The pack's clock, from the bit-packed timestamp at 0x9045."""
@@ -115,13 +183,19 @@ class BatteryPack(SofarComponent):
             if not 0 <= value <= 15:
                 raise ValueError(f"battery {name} {value} is outside 0-15")
         selection = group_nr << 8 | pack_nr
-        current = await self._unit.read_holding_registers(_PACK_ID_REGISTER, 1)
         # Some towers reject the write yet already serve the wanted pack.
-        if current[0] & 0x0FFF == selection:
+        if await self._async_serves(selection):
             return
         await self._unit.write_register(_BMS_INQUIRE_REGISTER, selection)
+        if await self._async_serves(selection):
+            return
         for _ in range(_SETTLE_STEPS):
             await sleep(_SETTLE_STEP)
-            current = await self._unit.read_holding_registers(_PACK_ID_REGISTER, 1)
-            if current[0] & 0x0FFF == selection:
+            if await self._async_serves(selection):
                 return
+
+    async def _async_serves(self, selection: int) -> bool:
+        """Whether the block reports the pack ``selection`` names."""
+        return (await self._unit.read_holding_registers(_PACK_ID_REGISTER, 1))[
+            0
+        ] & 0x0FFF == selection
