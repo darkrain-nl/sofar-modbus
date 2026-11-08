@@ -255,11 +255,10 @@ async def test_an_unproven_or_batteryless_inverter_is_refused(
     inverter_type: InverterType,
     message: str,
 ) -> None:
-    device = SofarInverter(
-        mock_modbus_unit, serial_number=HYBRID_SERIAL, inverter_type=inverter_type
-    )
     with pytest.raises(ValueError, match=message):
-        await device.async_write_battery_cutoffs(31, 10, 15)
+        await SofarInverter(
+            mock_modbus_unit, serial_number=HYBRID_SERIAL, inverter_type=inverter_type
+        ).async_write_battery_cutoffs(31, 10, 15)
     assert not writes
 
 
