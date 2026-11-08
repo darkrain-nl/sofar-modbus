@@ -998,10 +998,10 @@ class SofarInverter(Device):
 
         Each change is a stored write, so not for frequent automations.
         """
-        # The spec allows DOD and EOD 1-90; SofarCloud narrows off-grid.
-        if not 10 <= on_grid_discharge_cutoff_soc <= 99:
+        # SofarCloud's ranges; on-grid 100 stores DOD 0, below the spec's 1.
+        if not 10 <= on_grid_discharge_cutoff_soc <= 100:
             raise ValueError(
-                f"on-grid cut-off {on_grid_discharge_cutoff_soc}% is outside 10-99"
+                f"on-grid cut-off {on_grid_discharge_cutoff_soc}% is outside 10-100"
             )
         if not 10 <= off_grid_discharge_cutoff_soc <= 30:
             raise ValueError(

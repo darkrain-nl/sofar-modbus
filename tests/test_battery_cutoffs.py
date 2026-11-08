@@ -138,7 +138,7 @@ async def test_the_control_word_always_commits(
     ("on_grid", "off_grid", "recovery", "charge"),
     [
         (9, 9, 15, None),
-        (100, 10, 15, None),
+        (101, 10, 15, None),
         (30, 9, 15, None),
         (30, 100, 100, None),
         (40, 31, 36, None),
@@ -167,13 +167,13 @@ async def test_values_outside_the_rules_are_refused(
 async def test_the_broken_rule_is_named(
     hybrid: SofarInverter, writes: list[WriteEvent]
 ) -> None:
-    with pytest.raises(ValueError, match="on-grid cut-off 9% is outside 10-99"):
+    with pytest.raises(ValueError, match="on-grid cut-off 9% is outside 10-100"):
         await hybrid.async_write_battery_cutoffs(9, 9, 15)
 
 
 @pytest.mark.parametrize(
     ("on_grid", "off_grid", "recovery", "charge"),
-    [(10, 10, 15, 60), (99, 30, 100, 100), (30, 30, 35, None), (99, 10, 100, None)],
+    [(10, 10, 15, 60), (100, 30, 100, 100), (30, 30, 35, None), (100, 10, 100, None)],
 )
 async def test_values_on_the_edges_are_written(
     hybrid: SofarInverter,
@@ -187,6 +187,14 @@ async def test_values_on_the_edges_are_written(
     mock_modbus_unit.holding[0x1040] = CHARGE_CUTOFF_MASK
     await hybrid.async_write_battery_cutoffs(on_grid, off_grid, recovery, charge)
     assert len(writes) == 1
+
+
+async def test_on_grid_full_is_depth_of_discharge_zero(
+    hybrid: SofarInverter, writes: list[WriteEvent]
+) -> None:
+    """SofarCloud stores on-grid 100 as DOD 0, so the library does too."""
+    await hybrid.async_write_battery_cutoffs(100, 10, 15)
+    assert writes[0].values[0x104D - 0x1044] == 0
 
 
 async def test_an_undeclared_charge_cutoff_is_refused(
