@@ -998,9 +998,15 @@ class SofarInverter(Device):
 
         Each change is a stored write, so not for frequent automations.
         """
-        for soc in (on_grid_discharge_cutoff_soc, off_grid_discharge_cutoff_soc):
-            if not 10 <= soc <= 99:
-                raise ValueError(f"discharge cut-off {soc}% is outside 10-99")
+        # The spec allows DOD and EOD 1-90; SofarCloud narrows off-grid.
+        if not 10 <= on_grid_discharge_cutoff_soc <= 99:
+            raise ValueError(
+                f"on-grid cut-off {on_grid_discharge_cutoff_soc}% is outside 10-99"
+            )
+        if not 10 <= off_grid_discharge_cutoff_soc <= 30:
+            raise ValueError(
+                f"off-grid cut-off {off_grid_discharge_cutoff_soc}% is outside 10-30"
+            )
         if on_grid_discharge_cutoff_soc < off_grid_discharge_cutoff_soc:
             raise ValueError("the on-grid cut-off is below the off-grid one")
         if not (off_grid_discharge_cutoff_soc + 5 <= off_grid_recovery_soc <= 100):
@@ -1008,8 +1014,9 @@ class SofarInverter(Device):
                 f"off-grid recovery {off_grid_recovery_soc}% is not between "
                 f"5 above the off-grid cut-off and 100"
             )
-        if charge_cutoff_soc is not None and not 0 <= charge_cutoff_soc <= 100:
-            raise ValueError(f"charge cut-off {charge_cutoff_soc}% is outside 0-100")
+        # SofarCloud's range; the spec reserves 0x105B, so it says nothing.
+        if charge_cutoff_soc is not None and not 60 <= charge_cutoff_soc <= 100:
+            raise ValueError(f"charge cut-off {charge_cutoff_soc}% is outside 60-100")
         await self.async_ensure_setup()
         if "battery_config" not in self._settings:
             raise ValueError(f"inverter {self.serial_number} has no battery config")

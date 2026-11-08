@@ -141,10 +141,11 @@ async def test_the_control_word_always_commits(
         (100, 10, 15, None),
         (30, 9, 15, None),
         (30, 100, 100, None),
+        (40, 31, 36, None),
         (20, 30, 40, None),
         (30, 10, 14, None),
         (30, 10, 101, None),
-        (30, 10, 15, -1),
+        (30, 10, 15, 59),
         (30, 10, 15, 101),
     ],
 )
@@ -163,9 +164,16 @@ async def test_values_outside_the_rules_are_refused(
     assert not writes
 
 
+async def test_the_broken_rule_is_named(
+    hybrid: SofarInverter, writes: list[WriteEvent]
+) -> None:
+    with pytest.raises(ValueError, match="on-grid cut-off 9% is outside 10-99"):
+        await hybrid.async_write_battery_cutoffs(9, 9, 15)
+
+
 @pytest.mark.parametrize(
     ("on_grid", "off_grid", "recovery", "charge"),
-    [(10, 10, 15, 0), (99, 95, 100, 100), (50, 50, 55, None), (99, 10, 100, None)],
+    [(10, 10, 15, 60), (99, 30, 100, 100), (30, 30, 35, None), (99, 10, 100, None)],
 )
 async def test_values_on_the_edges_are_written(
     hybrid: SofarInverter,
