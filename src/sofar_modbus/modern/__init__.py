@@ -14,6 +14,7 @@ from .device import (
     PV_STRING_COMPONENTS,
     READING_COMPONENTS,
     SETTING_COMPONENTS,
+    BatteryConfigWriteError,
     SofarInverter,
     identify,
 )
@@ -21,6 +22,7 @@ from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
 from .enums import (
     BatConfigCellType,
     BatConfigProtocol,
+    BatConfigWriteStatus,
     ChargerUseMode,
     EpsControlMode,
     Fault1,
@@ -99,10 +101,12 @@ __all__ = [
     "ActivePowerControl",
     "BatConfigCellType",
     "BatConfigProtocol",
+    "BatConfigWriteStatus",
     "BatteryActiveControl",
     "BatteryChargeCutoff",
     "BatteryConfig",
     "BatteryConfigId",
+    "BatteryConfigWriteError",
     "BatteryEnergy",
     "BatteryPack",
     "BatteryTower",

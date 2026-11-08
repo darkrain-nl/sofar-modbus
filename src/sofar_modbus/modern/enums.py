@@ -572,6 +572,18 @@ class BatConfigCellType(IntEnum):
     FLOODED = 6
 
 
+class BatConfigWriteStatus(IntEnum):
+    """BatConfig: Control, as read back: the last write's status."""
+
+    SUCCESS = 0
+    BUSY = 1
+    REFUSED = 0xFFFB
+    NO_ANSWER = 0xFFFC
+    DISABLED = 0xFFFD
+    STORAGE_FAILED = 0xFFFE
+    INVALID_INPUT = 0xFFFF
+
+
 class RemoteSwitchOnOff(IntEnum):
     """Remote Switch On Off."""
 

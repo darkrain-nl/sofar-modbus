@@ -245,6 +245,26 @@ sets the inverter's clock, and `async_start_iv_curve_scan()` sweeps the PV
 strings. `supports_set_time` and `supports_iv_curve_scan` say whether this
 model takes them: the clock on PV and hybrid inverters, the scan on hybrids.
 
+The battery cut-offs are written in the SofarCloud app's percentages:
+
+```python
+await inverter.async_write_battery_cutoffs(
+    on_grid_discharge_cutoff_soc=30,
+    off_grid_discharge_cutoff_soc=10,
+    off_grid_recovery_soc=15,
+    charge_cutoff_soc=95,  # optional; only where the mask declares 0x105B
+)
+```
+
+It reads the battery configuration fresh, writes it back with only those values
+changed, and reads it again to prove the commit: the status register can report
+success for an older write. A commit the inverter refuses, or does not keep,
+raises `BatteryConfigWriteError`, a `ModbusError` carrying the reported
+`BatConfigWriteStatus`. Each commit is a stored write, so values already set are
+not written again, and the call is not meant for automations that run often.
+Three-phase hybrids only, and a lead-acid battery is refused: both need a
+write no owner has tested yet.
+
 A BTS battery tower multiplexes every pack onto one register block, so packs are
 read one at a time, by their own call rather than by either poll:
 
