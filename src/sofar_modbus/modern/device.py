@@ -805,11 +805,11 @@ class SofarInverter(Device):
 
         Check ``answered``: a not-yet-switched tower still answers.
         """
-        self.battery_pack.group_nr = group_nr
-        self.battery_pack.pack_nr = pack_nr
         async with self._pack_lock:
+            self.battery_pack.group_nr = group_nr
+            self.battery_pack.pack_nr = pack_nr
             await self._async_read_pack(self.battery_pack)
-        self.battery_pack.notify()
+            self.battery_pack.notify()
         return self.battery_pack
 
     async def async_update_packs(self) -> UpdateReport:

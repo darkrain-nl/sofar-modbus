@@ -314,9 +314,7 @@ async def test_a_sweep_starts_at_the_pack_the_tower_serves(
     await tower.async_update_packs()
     writes = selection_writes(tower_unit)
 
-    report = await tower.async_update_packs()
-
-    assert report.updated == {BATTERY_PACKS}
+    assert (await tower.async_update_packs()).updated == {BATTERY_PACKS}
     assert writes == [0x0000, 0x0100]
     assert _answered(tower) == {(0, 0): True, (1, 0): True, (2, 0): True}
 
@@ -395,9 +393,7 @@ async def test_a_pack_whose_read_fails_fails_alone(
 
     tower_unit.on_write(on_write)
 
-    report = await tower.async_update_packs()
-
-    assert report.updated == {BATTERY_PACKS}
+    assert (await tower.async_update_packs()).updated == {BATTERY_PACKS}
     assert _answered(tower) == {(0, 0): True, (1, 0): True, (2, 0): False}
 
 
@@ -422,9 +418,7 @@ async def test_an_offline_group_is_never_selected(
     tower_unit.holding[0x9022] = 0b101
     writes = selection_writes(tower_unit)
 
-    report = await tower.async_update_packs()
-
-    assert report.updated == {BATTERY_PACKS}
+    assert (await tower.async_update_packs()).updated == {BATTERY_PACKS}
     assert 0x0100 not in writes
     assert _answered(tower) == {(0, 0): True, (1, 0): False, (2, 0): True}
 
@@ -448,9 +442,7 @@ async def test_a_refused_online_bitmap_selects_every_group(
     """Firmware older than the bitmap still has its packs checked."""
     tower_unit.fail_read(0x9022, IllegalDataAddressError())
 
-    report = await tower.async_update_packs()
-
-    assert report.updated == {BATTERY_PACKS}
+    assert (await tower.async_update_packs()).updated == {BATTERY_PACKS}
     assert _answered(tower) == {(0, 0): True, (1, 0): True, (2, 0): True}
 
 
@@ -461,9 +453,7 @@ async def test_a_timed_out_online_bitmap_fails_the_poll(
     error = ModbusTimeoutError("no answer")
     tower_unit.fail_read(0x9022, error)
 
-    report = await tower.async_update_packs()
-
-    assert report.failed == {BATTERY_PACKS: error}
+    assert (await tower.async_update_packs()).failed == {BATTERY_PACKS: error}
     assert _answered(tower) == {(0, 0): False, (1, 0): False, (2, 0): False}
 
 
@@ -537,6 +527,32 @@ async def test_overlapping_pack_polls_take_turns(
     assert writes == [0x0100, 0x0200, 0x0100, 0x0200, 0x0000]
 
 
+async def test_overlapping_single_pack_reads_keep_their_pack(
+    tower: SofarInverter,
+    tower_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both reads share ``battery_pack``; each must see its own pack."""
+    yield_before_reads(monkeypatch, tower_unit)
+    notified: list[tuple[int | None, int | None, bool]] = []
+    tower.battery_pack.add_update_listener(
+        lambda: notified.append(
+            (
+                tower.battery_pack.group_nr,
+                tower.battery_pack.pack_cycles,
+                tower.battery_pack.answered,
+            )
+        )
+    )
+
+    await asyncio.gather(
+        tower.async_read_pack(pack_nr=0, group_nr=1),
+        tower.async_read_pack(pack_nr=0, group_nr=2),
+    )
+
+    assert notified == [(1, 77, True), (2, 78, True)]
+
+
 async def test_reading_one_pack_names_it(tower: SofarInverter) -> None:
     pack = await tower.async_read_pack(pack_nr=0, group_nr=2)
 
@@ -550,9 +566,7 @@ async def test_cell_voltages_are_in_cell_order(
 ) -> None:
     tower_unit.holding.update({0x9051 + i: 3001 + i for i in range(24)})
 
-    pack = await tower.async_read_pack(pack_nr=0)
-
-    assert pack.cell_voltages == pytest.approx(
+    assert (await tower.async_read_pack(pack_nr=0)).cell_voltages == pytest.approx(
         [
             3.001,
             3.002,
@@ -590,9 +604,9 @@ async def test_cell_temperatures_are_in_sensor_order(
         {0x906B: 211, 0x906C: 222, 0x906D: 233, 0x906E: 0x10000 - 15, 0x906F: 999}
     )
 
-    pack = await tower.async_read_pack(pack_nr=0)
-
-    assert pack.cell_temperatures == pytest.approx((21.1, 22.2, 23.3, -1.5))
+    assert (await tower.async_read_pack(pack_nr=0)).cell_temperatures == pytest.approx(
+        (21.1, 22.2, 23.3, -1.5)
+    )
 
 
 def test_an_unread_pack_has_no_cell_values(tower: SofarInverter) -> None:

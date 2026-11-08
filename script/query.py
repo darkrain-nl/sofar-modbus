@@ -140,9 +140,8 @@ async def _sweep_packs(inverter: SofarInverter, unit: TimedUnit) -> list[str]:
     sweeps: list[str] = []
     for number in range(1, PACK_SWEEPS + 1):
         reads, started = unit.reads, time.monotonic()
-        report = await inverter.async_update_packs()
         sweeps.append(
-            f"Pack poll {number}: {_outcome(report)}, "
+            f"Pack poll {number}: {_outcome(await inverter.async_update_packs())}, "
             f"{unit.reads - reads} Modbus reads, {time.monotonic() - started:.1f} s"
         )
     return sweeps

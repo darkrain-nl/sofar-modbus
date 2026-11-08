@@ -847,9 +847,8 @@ async def test_a_slow_tower_is_given_time_to_switch(
     monkeypatch.setattr(battery_pack, "sleep", settle)
     pack = await hybrid.async_read_pack(pack_nr=0, group_nr=1)
     assert pack.pack_id == 1 << 8
-    pack_id_reads = [e for e in mock_modbus_unit.read_events if e.address == 0x9044]
     # Before the write, right after it, three settling, then the block.
-    assert len(pack_id_reads) == 6
+    assert len([e for e in mock_modbus_unit.read_events if e.address == 0x9044]) == 6
 
 
 async def test_a_tower_switching_with_the_write_is_read_at_once(
@@ -862,9 +861,7 @@ async def test_a_tower_switching_with_the_write_is_read_at_once(
     settle = AsyncMock()
     monkeypatch.setattr(battery_pack, "sleep", settle)
 
-    pack = await hybrid.async_read_pack(pack_nr=0, group_nr=1)
-
-    assert pack.answered
+    assert (await hybrid.async_read_pack(pack_nr=0, group_nr=1)).answered
     settle.assert_not_awaited()
 
 
@@ -874,8 +871,10 @@ async def test_a_tower_that_never_switches_is_read_anyway(
     """The caller learns it from ``pack_id``, not from an error."""
     pack = await hybrid.async_read_pack(pack_nr=0, group_nr=1)
     assert pack.pack_id == 0
-    pack_id_reads = [e for e in mock_modbus_unit.read_events if e.address == 0x9044]
-    assert len(pack_id_reads) == 1 + 1 + battery_pack._SETTLE_STEPS + 1
+    assert (
+        len([e for e in mock_modbus_unit.read_events if e.address == 0x9044])
+        == 1 + 1 + battery_pack._SETTLE_STEPS + 1
+    )
 
 
 async def test_selecting_outside_the_addressable_range_is_refused(
