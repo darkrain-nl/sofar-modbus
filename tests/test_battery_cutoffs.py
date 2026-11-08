@@ -190,14 +190,30 @@ async def test_an_undeclared_charge_cutoff_is_refused(
     assert not writes
 
 
+@pytest.mark.parametrize("cell_type", [0, 4, 5, 6])
 async def test_a_lead_acid_battery_is_refused(
-    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit, writes: list[WriteEvent]
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    writes: list[WriteEvent],
+    cell_type: int,
 ) -> None:
     """Lead-acid takes 23 words; only the 19-word path is proven."""
-    mock_modbus_unit.holding[0x1046] = 1
+    mock_modbus_unit.holding.update({0x1046: 1, 0x1051: cell_type})
     with pytest.raises(ValueError, match="lead-acid"):
         await hybrid.async_write_battery_cutoffs(31, 10, 15)
     assert not writes
+
+
+@pytest.mark.parametrize("cell_type", [1, 2, 3])
+async def test_a_lithium_battery_is_written(
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    writes: list[WriteEvent],
+    cell_type: int,
+) -> None:
+    mock_modbus_unit.holding.update({0x1046: 1, 0x1051: cell_type})
+    await hybrid.async_write_battery_cutoffs(31, 10, 15)
+    assert len(writes) == 1
 
 
 async def test_a_bts_5k_reading_lead_acid_is_written(

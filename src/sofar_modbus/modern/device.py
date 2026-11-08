@@ -104,6 +104,15 @@ _BAT_CONFIG_WORDS = 19
 _BAT_CONFIG_CHARGE_CUTOFF_WORDS = 24
 _BAT_CONFIG_PROTOCOL = BatteryConfigId.bat_config_protocol.address
 _BAT_CONFIG_CELL_TYPE = BatteryConfig.bat_config_cell_type.address
+# Lead-acid chemistries take a 23-word write that nobody has tested.
+_LEAD_ACID = frozenset(
+    {
+        BatConfigCellType.LEAD_ACID,
+        BatConfigCellType.AGM,
+        BatConfigCellType.GEL,
+        BatConfigCellType.FLOODED,
+    }
+)
 _BAT_CONFIG_CONTROL = 0x1053
 # 2 would reset the battery to its protocol's defaults.
 _BAT_CONFIG_COMMIT = 1
@@ -1038,9 +1047,9 @@ class SofarInverter(Device):
         A stale success status looks like a fresh one, so read back.
         """
         current = await self._async_read_battery_config(count)
-        # A BTS 5K reads lead-acid, but lead-acid proper takes 23 words.
+        # A BTS 5K reads cell type 0, a default its protocol ignores.
         if (
-            current[_BAT_CONFIG_CELL_TYPE] == BatConfigCellType.LEAD_ACID
+            current[_BAT_CONFIG_CELL_TYPE] in _LEAD_ACID
             and current[_BAT_CONFIG_PROTOCOL] != BatConfigProtocol.BTS_5K
         ):
             raise ValueError("battery config writes are untested on lead-acid")
