@@ -9,7 +9,11 @@ from modbus_connection import ModbusError
 from modbus_connection.mock import MockModbusUnit, WriteEvent
 
 from sofar_modbus import InverterType, SofarInverter
-from sofar_modbus.modern import BatConfigWriteStatus, BatteryConfigWriteError
+from sofar_modbus.modern import (
+    BatConfigWriteStatus,
+    BatteryConfig,
+    BatteryConfigWriteError,
+)
 from sofar_modbus.modern import device as device_module
 from sofar_modbus.variants import GEN, HYBRID, PV, X1, X3
 
@@ -387,3 +391,61 @@ async def test_overlapping_writes_take_turns(
         * 2
     )
     assert mock_modbus_unit.holding[0x104D] == 68
+
+
+async def read_config(
+    unit: MockModbusUnit, fields: tuple[str, ...] | None = None
+) -> BatteryConfig:
+    """A battery config read from the capture, limited to ``fields``."""
+    unit.holding.update(CAPTURE)
+    config = BatteryConfig(unit)
+    if fields is not None:
+        config.restrict_fields(fields)
+    await config.async_update()
+    return config
+
+
+async def test_the_cutoffs_read_as_charge_left(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """DOD 70, EOD 90 and buffer 5 read back as 30, 10 and 15."""
+    config = await read_config(mock_modbus_unit)
+    assert config.on_grid_discharge_cutoff_soc == 30
+    assert config.off_grid_discharge_cutoff_soc == 10
+    assert config.off_grid_recovery_soc == 15
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        (("bat_config_end_of_discharge", "bat_config_eps_buffer"), (None, 10, 15)),
+        (("bat_config_depth_of_discharge", "bat_config_eps_buffer"), (30, None, None)),
+        (
+            ("bat_config_depth_of_discharge", "bat_config_end_of_discharge"),
+            (30, 10, None),
+        ),
+    ],
+)
+async def test_a_cutoff_with_an_unread_input_is_none(
+    mock_modbus_unit: MockModbusUnit,
+    fields: tuple[str, ...],
+    expected: tuple[int | None, int | None, int | None],
+) -> None:
+    """A missing register leaves its cut-off unknown, not a guess."""
+    config = await read_config(mock_modbus_unit, fields)
+    assert (
+        config.on_grid_discharge_cutoff_soc,
+        config.off_grid_discharge_cutoff_soc,
+        config.off_grid_recovery_soc,
+    ) == expected
+
+
+async def test_written_cutoffs_read_back(
+    hybrid: SofarInverter, writes: list[WriteEvent]
+) -> None:
+    """A poll after a write reads the values that were written."""
+    await hybrid.async_write_battery_cutoffs(60, 20, 45)
+    await hybrid.async_update_settings()
+    assert hybrid.battery_config.on_grid_discharge_cutoff_soc == 60
+    assert hybrid.battery_config.off_grid_discharge_cutoff_soc == 20
+    assert hybrid.battery_config.off_grid_recovery_soc == 45

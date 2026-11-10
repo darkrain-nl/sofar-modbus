@@ -170,6 +170,29 @@ class BatteryConfig(SofarComponent):
     bat_config_voltage_float = gauge(0x105A, 0.1, signed=False, unit="V")
     """BatConfig: Lead Acid Battery Float Voltage."""
 
+    @property
+    def on_grid_discharge_cutoff_soc(self) -> int | None:
+        """Charge left at the on-grid cut-off, in %."""
+        if (dod := self.bat_config_depth_of_discharge) is None:
+            return None
+        return 100 - dod
+
+    @property
+    def off_grid_discharge_cutoff_soc(self) -> int | None:
+        """Charge left at the off-grid cut-off, in %."""
+        if (eod := self.bat_config_end_of_discharge) is None:
+            return None
+        return 100 - eod
+
+    @property
+    def off_grid_recovery_soc(self) -> int | None:
+        """Charge at which off-grid output resumes, in %."""
+        if (cutoff := self.off_grid_discharge_cutoff_soc) is None or (
+            buffer := self.bat_config_eps_buffer
+        ) is None:
+            return None
+        return cutoff + buffer
+
 
 class BatteryChargeCutoff(SofarComponent):
     """Charge limit of the selected battery, at a reserved address."""
