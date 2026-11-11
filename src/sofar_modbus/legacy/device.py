@@ -27,8 +27,8 @@ _STORAGE_BLOCK = ("storage", "storage_three_phase", "storage_eps")
 # temperatures; ``pv_single_phase`` stops short, so it stays apart.
 _PV_BLOCK = ("pv_common", "pv_three_phase")
 
-# Serial-number prefix -> inverter bitmask, from the plugin's
-# async_determineInverterType. This generation reports no model name.
+# Kept in step with the plugin's async_determineInverterType. This
+# generation reports no model name.
 _SERIAL_PREFIXES: tuple[tuple[str, InverterType], ...] = (
     ("SE1E", HYBRID | X1),
     ("SM1E", HYBRID | X1),

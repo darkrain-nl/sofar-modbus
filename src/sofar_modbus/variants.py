@@ -1,18 +1,4 @@
-"""Which inverter a register belongs to.
-
-Sofar's Modbus map is not one map: what a register means — or whether the
-inverter answers it at all — depends on the model. The upstream integration
-encodes this as an ``allowedtypes`` bitmask on every entity, and matches an
-entity against the detected inverter with :func:`matches`. This module keeps
-that scheme intact: :class:`InverterType` is the bitmask, every component
-carries the mask it applies to, and a device only polls the components that
-match.
-
-The bits fall into groups. Within a group the bits of a mask are OR-ed; between
-groups they are AND-ed; a group a mask says nothing about matches anything. So
-``HYBRID | EPS`` means "a hybrid inverter, with EPS enabled", and ``PV | HYBRID``
-means "a PV *or* hybrid inverter, EPS irrelevant".
-"""
+"""Which inverter a register belongs to."""
 
 from __future__ import annotations
 
@@ -23,7 +9,7 @@ class InverterType(IntFlag):
     """The inverter-characterising bitmask, values as upstream defines them."""
 
     GEN = 0x0001
-    """Newer register map — the plugin's base 'generation' bit."""
+    """The current-generation register map."""
     GEN2 = 0x0002
     GEN3 = 0x0004
     GEN4 = 0x0008
@@ -55,12 +41,7 @@ class InverterType(IntFlag):
     MPPT10 = 0x400000
 
     BAT_BTS = 0x1000000
-    """A Sofar BTS battery tower, whose packs are read one at a time.
-
-    Set from the serial number, but — faithful to upstream — it belongs to no
-    matching group, so as a mask it filters nothing. The device object gates the
-    tower on it directly instead.
-    """
+    """A BTS battery tower; in no group, so the device gates on it."""
 
 
 GEN = InverterType.GEN
@@ -83,6 +64,8 @@ MPPT8 = InverterType.MPPT8
 MPPT10 = InverterType.MPPT10
 BAT_BTS = InverterType.BAT_BTS
 
+# Bits OR within a group and AND across groups; a group the mask
+# leaves empty matches any inverter, so PV | HYBRID ignores EPS.
 _GROUPS = (
     GEN | GEN2 | GEN3 | GEN4,
     X1 | X3,
@@ -95,12 +78,5 @@ _GROUPS = (
 
 
 def matches(inverter: InverterType, mask: InverterType) -> bool:
-    """Whether a component declaring ``mask`` applies to ``inverter``.
-
-    Ported from the plugins' ``matchInverterWithMask``: per group, the mask must
-    either name a bit the inverter has, or name none at all.
-    """
-    return all(
-        inverter & mask & group or not mask & group  #
-        for group in _GROUPS
-    )
+    """Whether a component declaring ``mask`` applies to ``inverter``."""
+    return all(inverter & mask & group or not mask & group for group in _GROUPS)

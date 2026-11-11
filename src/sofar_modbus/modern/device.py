@@ -183,7 +183,7 @@ SETTING_COMPONENTS: Final[tuple[str, ...]] = (
     "passive",
 )
 
-# Ported from the plugin's async_determineInverterType; ordered
+# Kept in step with the plugin's async_determineInverterType; ordered
 # longest-prefix-first so the first match is the most specific one.
 _SERIAL_PREFIXES: tuple[tuple[str, InverterType, str | None], ...] = (
     ("SP1ES120N6", HYBRID | X3, "HYD20KTL-3P"),
@@ -1060,15 +1060,15 @@ class SofarInverter(Device):
                 self.serial_number,
             )
             return
+        # _holds() raised above for any wanted address outside the read.
         await self.modbus_unit.write_registers(
             _BAT_CONFIG_REGISTER,
-            list(
-                {
-                    **current,
-                    **wanted,
-                    _BAT_CONFIG_CONTROL: _BAT_CONFIG_COMMIT,
-                }.values()
-            ),
+            [
+                _BAT_CONFIG_COMMIT
+                if address == _BAT_CONFIG_CONTROL
+                else wanted.get(address, word)
+                for address, word in current.items()
+            ],
         )
         if (status := await self._async_battery_config_status()) != (
             BatConfigWriteStatus.SUCCESS
