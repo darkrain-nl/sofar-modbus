@@ -198,21 +198,27 @@ class Identity(SofarComponent):
     @property
     def rtc(self) -> datetime | None:
         """The inverter's clock, from the six year-first registers at 0x042C."""
-        parts = (
+        match (
             self._rtc_year,
             self._rtc_month,
             self._rtc_day,
             self._rtc_hour,
             self._rtc_minute,
             self._rtc_second,
-        )
-        if any(part is None for part in parts):
-            return None
-        year, month, day, hour, minute, second = (int(p) for p in parts)  # type: ignore[arg-type]
-        try:
-            return datetime(2000 + year % 100, month, day, hour, minute, second)
-        except ValueError:  # an unset clock reports out-of-range parts
-            return None
+        ):
+            case (
+                int() as year,
+                int() as month,
+                int() as day,
+                int() as hour,
+                int() as minute,
+                int() as second,
+            ):
+                try:
+                    return datetime(2000 + year % 100, month, day, hour, minute, second)
+                except ValueError:  # an unset clock reports out-of-range parts
+                    return None
+        return None
 
 
 class GridOutput(SofarComponent):

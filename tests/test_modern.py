@@ -447,7 +447,8 @@ async def test_a_blank_clock_reads_as_no_value(
 ) -> None:
     """Month 0 is not a date; the property says so rather than raising."""
     mock_modbus_unit.holding[0x042D] = 0
-    await hybrid.async_update()
+    await hybrid.identity.async_update()
+    assert hybrid.identity.serial_number == HYBRID_SERIAL
     assert hybrid.identity.rtc is None
 
 
