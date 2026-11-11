@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import ClassVar
 
 from modbus_connection.model import RegisterField, gauge, integer
@@ -10,15 +11,18 @@ from modbus_connection.model import RegisterField, gauge, integer
 from ..model import SofarComponent
 from ..variants import GEN, HYBRID
 
-type BatteryStringFields = tuple[
-    RegisterField[float],  # voltage
-    RegisterField[float],  # current
-    RegisterField[float],  # power
-    RegisterField[int],  # temperature
-    RegisterField[int],  # capacity
-    RegisterField[int],  # state_of_health
-    RegisterField[int],  # charge_cycle
-]
+
+@dataclass(frozen=True, slots=True)
+class BatteryStringFields:
+    """The fields one battery string reads from."""
+
+    voltage: RegisterField[float]
+    current: RegisterField[float]
+    power: RegisterField[float]
+    temperature: RegisterField[int]
+    capacity: RegisterField[int]
+    state_of_health: RegisterField[int]
+    charge_cycle: RegisterField[int]
 
 
 class BatteryStringComponent(SofarComponent):
@@ -30,57 +34,46 @@ class BatteryStringComponent(SofarComponent):
 class BatteryString:
     """One battery string's readings, from the component serving it."""
 
-    def __init__(
-        self, number: int, component_name: str, component: BatteryStringComponent
-    ) -> None:
+    def __init__(self, number: int, component: BatteryStringComponent) -> None:
         """Initialize the view."""
         self.number = number
-        self.component_name = component_name
         self.component = component
-        (
-            self._voltage,
-            self._current,
-            self._power,
-            self._temperature,
-            self._capacity,
-            self._state_of_health,
-            self._charge_cycle,
-        ) = component.strings[number]
+        self._fields = component.strings[number]
 
     @property
     def voltage(self) -> float | None:
         """The string's voltage, in V."""
-        return self._voltage.__get__(self.component)
+        return self._fields.voltage.__get__(self.component)
 
     @property
     def current(self) -> float | None:
         """The string's current, in A; negative while discharging."""
-        return self._current.__get__(self.component)
+        return self._fields.current.__get__(self.component)
 
     @property
     def power(self) -> float | None:
         """The string's power, in kW; negative while discharging."""
-        return self._power.__get__(self.component)
+        return self._fields.power.__get__(self.component)
 
     @property
     def temperature(self) -> int | None:
         """The string's temperature, in °C."""
-        return self._temperature.__get__(self.component)
+        return self._fields.temperature.__get__(self.component)
 
     @property
     def capacity(self) -> int | None:
         """The string's state of charge, in %."""
-        return self._capacity.__get__(self.component)
+        return self._fields.capacity.__get__(self.component)
 
     @property
     def state_of_health(self) -> int | None:
         """The string's state of health, in %."""
-        return self._state_of_health.__get__(self.component)
+        return self._fields.state_of_health.__get__(self.component)
 
     @property
     def charge_cycle(self) -> int | None:
         """The string's charge cycle count."""
-        return self._charge_cycle.__get__(self.component)
+        return self._fields.charge_cycle.__get__(self.component)
 
 
 class BatteryStrings1To2(BatteryStringComponent):
@@ -105,23 +98,23 @@ class BatteryStrings1To2(BatteryStringComponent):
     battery_charge_cycle_2 = integer(0x0611, signed=False)
 
     strings = {
-        1: (
-            battery_voltage_1,
-            battery_current_1,
-            battery_power_1,
-            battery_temperature_1,
-            battery_capacity_1,
-            battery_state_of_health_1,
-            battery_charge_cycle_1,
+        1: BatteryStringFields(
+            voltage=battery_voltage_1,
+            current=battery_current_1,
+            power=battery_power_1,
+            temperature=battery_temperature_1,
+            capacity=battery_capacity_1,
+            state_of_health=battery_state_of_health_1,
+            charge_cycle=battery_charge_cycle_1,
         ),
-        2: (
-            battery_voltage_2,
-            battery_current_2,
-            battery_power_2,
-            battery_temperature_2,
-            battery_capacity_2,
-            battery_state_of_health_2,
-            battery_charge_cycle_2,
+        2: BatteryStringFields(
+            voltage=battery_voltage_2,
+            current=battery_current_2,
+            power=battery_power_2,
+            temperature=battery_temperature_2,
+            capacity=battery_capacity_2,
+            state_of_health=battery_state_of_health_2,
+            charge_cycle=battery_charge_cycle_2,
         ),
     }
 
@@ -183,59 +176,59 @@ class BatteryStrings3To8(BatteryStringComponent):
     battery_charge_cycle_8 = integer(0x063B, signed=False)
 
     strings = {
-        3: (
-            battery_voltage_3,
-            battery_current_3,
-            battery_power_3,
-            battery_temperature_3,
-            battery_capacity_3,
-            battery_state_of_health_3,
-            battery_charge_cycle_3,
+        3: BatteryStringFields(
+            voltage=battery_voltage_3,
+            current=battery_current_3,
+            power=battery_power_3,
+            temperature=battery_temperature_3,
+            capacity=battery_capacity_3,
+            state_of_health=battery_state_of_health_3,
+            charge_cycle=battery_charge_cycle_3,
         ),
-        4: (
-            battery_voltage_4,
-            battery_current_4,
-            battery_power_4,
-            battery_temperature_4,
-            battery_capacity_4,
-            battery_state_of_health_4,
-            battery_charge_cycle_4,
+        4: BatteryStringFields(
+            voltage=battery_voltage_4,
+            current=battery_current_4,
+            power=battery_power_4,
+            temperature=battery_temperature_4,
+            capacity=battery_capacity_4,
+            state_of_health=battery_state_of_health_4,
+            charge_cycle=battery_charge_cycle_4,
         ),
-        5: (
-            battery_voltage_5,
-            battery_current_5,
-            battery_power_5,
-            battery_temperature_5,
-            battery_capacity_5,
-            battery_state_of_health_5,
-            battery_charge_cycle_5,
+        5: BatteryStringFields(
+            voltage=battery_voltage_5,
+            current=battery_current_5,
+            power=battery_power_5,
+            temperature=battery_temperature_5,
+            capacity=battery_capacity_5,
+            state_of_health=battery_state_of_health_5,
+            charge_cycle=battery_charge_cycle_5,
         ),
-        6: (
-            battery_voltage_6,
-            battery_current_6,
-            battery_power_6,
-            battery_temperature_6,
-            battery_capacity_6,
-            battery_state_of_health_6,
-            battery_charge_cycle_6,
+        6: BatteryStringFields(
+            voltage=battery_voltage_6,
+            current=battery_current_6,
+            power=battery_power_6,
+            temperature=battery_temperature_6,
+            capacity=battery_capacity_6,
+            state_of_health=battery_state_of_health_6,
+            charge_cycle=battery_charge_cycle_6,
         ),
-        7: (
-            battery_voltage_7,
-            battery_current_7,
-            battery_power_7,
-            battery_temperature_7,
-            battery_capacity_7,
-            battery_state_of_health_7,
-            battery_charge_cycle_7,
+        7: BatteryStringFields(
+            voltage=battery_voltage_7,
+            current=battery_current_7,
+            power=battery_power_7,
+            temperature=battery_temperature_7,
+            capacity=battery_capacity_7,
+            state_of_health=battery_state_of_health_7,
+            charge_cycle=battery_charge_cycle_7,
         ),
-        8: (
-            battery_voltage_8,
-            battery_current_8,
-            battery_power_8,
-            battery_temperature_8,
-            battery_capacity_8,
-            battery_state_of_health_8,
-            battery_charge_cycle_8,
+        8: BatteryStringFields(
+            voltage=battery_voltage_8,
+            current=battery_current_8,
+            power=battery_power_8,
+            temperature=battery_temperature_8,
+            capacity=battery_capacity_8,
+            state_of_health=battery_state_of_health_8,
+            charge_cycle=battery_charge_cycle_8,
         ),
     }
 

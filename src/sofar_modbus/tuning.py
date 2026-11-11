@@ -261,7 +261,7 @@ class LinkTuner:
         # anything, so this trails the poll that is being judged.
         self._answered |= report.updated
 
-    def observe_failure(self, err: ModbusError) -> None:
+    def observe_failure(self) -> None:
         """Take in a poll that raised rather than reporting.
 
         It named no component, so only its reads and opens count.

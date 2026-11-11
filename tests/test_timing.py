@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 import pytest
 from modbus_connection import (
-    ModbusConnectionError,
     ModbusDesyncError,
     ModbusError,
     ModbusTimeoutError,
@@ -188,7 +187,7 @@ async def test_the_tuner_leaves_the_timeout_alone(
     for _ in range(QUIET_POLLS):
         await inverter.async_update()
     tuner.observe(_timed_out())
-    tuner.observe_failure(ModbusTimeoutError("asleep"))
+    tuner.observe_failure()
 
     assert mock_modbus_unit.required_timeout is None
 
@@ -476,7 +475,7 @@ async def test_a_raised_poll_is_not_a_quiet_one(
     widened = tuner.tuning.spacing
 
     for _ in range(QUIET_POLLS * 2):
-        tuner.observe_failure(ModbusConnectionError("link down"))
+        tuner.observe_failure()
 
     assert widened == SPACING_STEPS[0]
     assert tuner.tuning.spacing == widened
