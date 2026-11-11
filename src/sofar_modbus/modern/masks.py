@@ -7,14 +7,12 @@ from typing import TYPE_CHECKING
 
 from modbus_connection import (
     GatewayTargetError,
-    IllegalDataAddressError,
-    IllegalDataValueError,
-    IllegalFunctionError,
     ModbusConnectionError,
     ModbusError,
     ModbusTimeoutError,
 )
 
+from ..model import REFUSALS
 from ..variants import (
     BAT_BTS,
     GEN,
@@ -117,7 +115,7 @@ async def _async_read_mask(unit: ModbusUnit, base: int) -> int | None:
     """The block's mask, or ``None`` if refused; other errors propagate."""
     try:
         registers = await unit.read_holding_registers(base, MASK_REGISTERS)
-    except (IllegalFunctionError, IllegalDataAddressError, IllegalDataValueError):
+    except REFUSALS:
         return None
     value = 0
     for register in registers:

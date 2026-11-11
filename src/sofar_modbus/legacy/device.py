@@ -7,10 +7,9 @@ import re
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Self
 
-from modbus_connection import IllegalDataAddressError, IllegalFunctionError
 from modbus_connection.model import ComponentGroup, Device, Raw
 
-from ..model import UpdateReport
+from ..model import REFUSALS, UpdateReport
 from ..variants import EPS, HYBRID, PV, X1, X3, InverterType, matches
 from .identity import LegacyIdentity
 from .pv import HybridPvString1, HybridPvString2, PvCommon, SinglePhasePv, ThreePhasePv
@@ -163,7 +162,7 @@ class SofarLegacyInverter(Device):
         """Whether this inverter answers the EPS registers."""
         try:
             await self.storage_eps.async_update(notify=False)
-        except (IllegalDataAddressError, IllegalFunctionError) as err:
+        except REFUSALS as err:
             _LOGGER.debug(
                 "Inverter %s refuses the EPS registers: %s", self.serial_number, err
             )

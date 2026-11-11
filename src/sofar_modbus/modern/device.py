@@ -11,16 +11,13 @@ from typing import TYPE_CHECKING, Final, Self
 
 from modbus_connection import (
     GatewayTargetError,
-    IllegalDataAddressError,
-    IllegalDataValueError,
-    IllegalFunctionError,
     ModbusConnectionError,
     ModbusError,
     ModbusTimeoutError,
 )
 from modbus_connection.model import Device, Raw
 
-from ..model import UpdateReport
+from ..model import REFUSALS, UpdateReport
 from ..tuning import LinkStats, LinkTuner, LinkTuning, TimedUnit
 from ..variants import (
     BAT_BTS,
@@ -125,7 +122,6 @@ _IDENTITY_ATTEMPTS = 3
 _FAULT_LOG_ATTEMPTS = 3
 
 _ONLINE_GROUPS_REGISTER = 0x9022  # bit n set: group n answers the BMS
-_REFUSALS = (IllegalFunctionError, IllegalDataAddressError, IllegalDataValueError)
 # The inquiry word addresses groups and packs in four bits each.
 _ADDRESSABLE = 16
 
@@ -625,7 +621,7 @@ class SofarInverter(Device):
                 await self.fault_log.async_update(notify=False)
             except ModbusConnectionError:
                 raise
-            except (IllegalDataAddressError, IllegalFunctionError) as err:
+            except REFUSALS as err:
                 return f"the event log is refused: {err!r}"
             except ModbusError as err:
                 failure = err
@@ -639,7 +635,7 @@ class SofarInverter(Device):
         """Whether this inverter answers the off-grid (EPS) block."""
         try:
             await self.offgrid.async_update(notify=False)
-        except (IllegalDataAddressError, IllegalFunctionError) as err:
+        except REFUSALS as err:
             _LOGGER.debug(
                 "Inverter %s refuses the off-grid block: %s", self.serial_number, err
             )
@@ -656,7 +652,7 @@ class SofarInverter(Device):
             return False
         try:
             laid_out = await self._async_read_tower_layout()
-        except _REFUSALS as err:
+        except REFUSALS as err:
             _LOGGER.debug(
                 "Inverter %s refuses the battery tower block: %s",
                 self.serial_number,
@@ -915,7 +911,7 @@ class SofarInverter(Device):
                     _ONLINE_GROUPS_REGISTER, 1
                 )
             )[0]
-        except _REFUSALS:
+        except REFUSALS:
             return (1 << _ADDRESSABLE) - 1
 
     async def _async_read_pack(self, pack: BatteryPack) -> None:

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
+    IllegalDataValueError,
     IllegalFunctionError,
     ModbusConnectionError,
     ModbusTimeoutError,
@@ -467,11 +468,14 @@ async def test_the_eps_probe_detects_presence(
     assert EPS in inverter.inverter_type
 
 
-@pytest.mark.parametrize("error", [IllegalDataAddressError(), IllegalFunctionError()])
+@pytest.mark.parametrize(
+    "error",
+    [IllegalFunctionError(), IllegalDataAddressError(), IllegalDataValueError()],
+)
 async def test_the_eps_probe_detects_absence(
     mock_modbus_unit: MockModbusUnit, error: Exception
 ) -> None:
-    """Either exception code means the off-grid block does not exist."""
+    """Any refusal means the off-grid block does not exist."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     mock_modbus_unit.fail_read(0x0504, error)
     inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
