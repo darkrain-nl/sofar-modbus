@@ -17,7 +17,7 @@ from modbus_connection import (
 )
 from modbus_connection.model import Device, Raw
 
-from ..model import REFUSALS, UpdateReport
+from ..model import REFUSALS, SofarComponent, UpdateReport
 from ..tuning import LinkStats, LinkTuner, LinkTuning, TimedUnit
 from ..variants import (
     BAT_BTS,
@@ -311,13 +311,55 @@ class SofarInverter(Device):
         self._battery_tower = BatteryTower(link)
         self._battery_packs: dict[tuple[int, int], BatteryPack] = {}
 
+        # What each name in READING_ and SETTING_COMPONENTS polls.
+        self._components: dict[str, SofarComponent] = {
+            "state": self.state,
+            "grid": self.grid,
+            "offgrid": self.offgrid,
+            "offgrid_single_phase": self.offgrid_single_phase,
+            "offgrid_three_phase": self.offgrid_three_phase,
+            "pv_1_2": self.pv_1_2,
+            "pv_3": self.pv_3,
+            "pv_4": self.pv_4,
+            "pv_5_6": self.pv_5_6,
+            "pv_7_8": self.pv_7_8,
+            "pv_9_10": self.pv_9_10,
+            "battery_1_2": self.battery_1_2,
+            "battery_3_8": self.battery_3_8,
+            "battery_totals": self.battery_totals,
+            "energy": self.energy,
+            "meter_energy": self.meter_energy,
+            "battery_energy": self.battery_energy,
+            "fault_log": self.fault_log,
+            "rtc_sync": self.rtc_sync,
+            "feed_in": self.feed_in,
+            "eps": self.eps,
+            "battery_active_control": self.battery_active_control,
+            "parallel": self.parallel,
+            "battery_config_id": self.battery_config_id,
+            "battery_config": self.battery_config,
+            "battery_charge_cutoff": self.battery_charge_cutoff,
+            "remote": self.remote,
+            "active_power_control": self.active_power_control,
+            "charger": self.charger,
+            "passive": self.passive,
+        }
         self._pv_strings = {
-            number: PvString(number, getattr(self, name))
-            for number, name in PV_STRING_COMPONENTS.items()
+            number: PvString(number, component)
+            for component in (
+                self.pv_1_2,
+                self.pv_3,
+                self.pv_4,
+                self.pv_5_6,
+                self.pv_7_8,
+                self.pv_9_10,
+            )
+            for number in component.strings
         }
         self._battery_strings = {
-            number: BatteryString(number, getattr(self, name))
-            for number, name in BATTERY_STRING_COMPONENTS.items()
+            number: BatteryString(number, component)
+            for component in (self.battery_1_2, self.battery_3_8)
+            for number in component.strings
         }
 
         self._readings: list[str] = []
@@ -483,7 +525,7 @@ class SofarInverter(Device):
         return [
             name
             for name in names
-            if matches(self.inverter_type, getattr(self, name).applies_to)
+            if matches(self.inverter_type, self._components[name].applies_to)
         ]
 
     async def async_ensure_setup(self) -> None:
@@ -778,7 +820,7 @@ class SofarInverter(Device):
         # Listeners fire once both attempts are in, so they see one poll.
         for name in names:
             if name in report.updated:
-                getattr(self, name).notify()
+                self._components[name].notify()
         return report
 
     async def _async_read(self, names: Iterable[str], report: UpdateReport) -> None:
@@ -788,7 +830,7 @@ class SofarInverter(Device):
         """
         for name in names:
             try:
-                await getattr(self, name).async_update(notify=False)
+                await self._components[name].async_update(notify=False)
             except ModbusConnectionError:
                 raise
             except ModbusTimeoutError as err:

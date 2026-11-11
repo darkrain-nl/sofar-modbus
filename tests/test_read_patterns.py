@@ -39,10 +39,9 @@ def covered(blocks: Iterable[ReadEvent], space: str = "holding") -> set[int]:
 
 def field_addresses(component: object) -> set[int]:
     """Every address a component's fields occupy, its slots included."""
-    parts = [component, *getattr(component, "slots", ())]
     return {
         field.address + offset
-        for part in parts
+        for part in [component, *getattr(component, "slots", ())]
         for field in part.resolved_fields.values()
         for offset in range(field.count)
     }
@@ -51,7 +50,7 @@ def field_addresses(component: object) -> set[int]:
 def legacy_served(
     inverter: SofarLegacyInverter,
 ) -> list[tuple[str, SofarLegacyComponent]]:
-    """Every component this inverter polls, named — pools flattened to members."""
+    """Every component this inverter polls, by name, pools as members."""
     served = []
     for name in (
         "pv_common",

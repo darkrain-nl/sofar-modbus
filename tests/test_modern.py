@@ -135,6 +135,16 @@ async def test_component_names_are_empty_until_setup(
     assert not set(hybrid.readings_components) & set(hybrid.settings_components)
 
 
+def test_each_component_name_polls_its_own_attribute(
+    hybrid: SofarInverter,
+) -> None:
+    assert len(READING_COMPONENTS) == 18
+    assert len(SETTING_COMPONENTS) == 12
+    assert hybrid._components.keys() == {*READING_COMPONENTS, *SETTING_COMPONENTS}
+    for name, component in hybrid._components.items():
+        assert component is getattr(hybrid, name)
+
+
 async def test_expected_components_come_from_the_type_before_setup(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
