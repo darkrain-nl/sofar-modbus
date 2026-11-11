@@ -57,7 +57,10 @@ class FeedInLimit(SofarComponent):
         """
         if max_power % 100:
             raise ValueError(f"feed-in power {max_power} is not a multiple of 100 W")
-        await self._unit.write_registers(0x1023, [int(mode), max_power // 100])
+        await self._unit.write_registers(
+            FeedInLimit.feedin_limitation_mode.address,
+            [int(mode), max_power // 100],
+        )
 
 
 class ActivePowerControl(SofarComponent):
@@ -82,8 +85,15 @@ class ActivePowerControl(SofarComponent):
         """
         if not 0 <= limit_pct <= 100:
             raise ValueError(f"active power limit {limit_pct}% is outside 0-100")
-        control = PowerControlFlags.ACTIVE_POWER if enabled else PowerControlFlags(0)
-        await self._unit.write_registers(0x1105, [int(control), round(limit_pct * 10)])
+        await self._unit.write_registers(
+            ActivePowerControl.power_control.address,
+            [
+                int(
+                    PowerControlFlags.ACTIVE_POWER if enabled else PowerControlFlags(0)
+                ),
+                round(limit_pct * 10),
+            ],
+        )
 
 
 class EpsControl(SofarComponent):
@@ -101,7 +111,7 @@ class EpsControl(SofarComponent):
 
         The wait time is reserved, so it goes out as 0.
         """
-        await self._unit.write_registers(0x1029, [int(mode), 0])
+        await self._unit.write_registers(EpsControl.eps_control.address, [int(mode), 0])
 
 
 class BatteryActiveControl(SofarComponent):
@@ -253,7 +263,9 @@ class PassiveMode(SofarComponent):
         """Set how long a passive-mode command holds, and what happens after."""
         if not 0 <= timeout <= 0xFFFF:
             raise ValueError(f"passive-mode timeout {timeout} is outside 0-65535")
-        await self._unit.write_registers(0x1184, [timeout, int(action)])
+        await self._unit.write_registers(
+            PassiveMode.passive_mode_timeout.address, [timeout, int(action)]
+        )
 
     async def async_write_power(
         self, grid_power: int, battery_min: int, battery_max: int
@@ -262,7 +274,11 @@ class PassiveMode(SofarComponent):
 
         The device takes the three int32 values only as one block.
         """
-        words: list[int] = []
-        for value in (grid_power, battery_min, battery_max):
-            words += encode_int(value, count=2)
-        await self._unit.write_registers(0x1187, words)
+        await self._unit.write_registers(
+            PassiveMode.passive_mode_grid_power.address,
+            [
+                word
+                for value in (grid_power, battery_min, battery_max)
+                for word in encode_int(value, count=2)
+            ],
+        )

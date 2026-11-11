@@ -234,7 +234,7 @@ def identify(serial: str) -> tuple[InverterType, str | None]:
 class SofarInverter(Device):
     """A current-generation Sofar inverter reached through a ``ModbusUnit``.
 
-    Build the unit from RTU -- ASCII framing over TCP is unsupported.
+    Build the unit from RTU: ASCII framing over TCP is unsupported.
     """
 
     def __init__(
@@ -259,20 +259,20 @@ class SofarInverter(Device):
         self._link = link
         self._tuner = LinkTuner(link)
         detected, detected_model = identify(serial_number)
-        if inverter_type is None:
-            if detected:
-                _LOGGER.debug(
-                    "Serial %s identifies as %s, model %s",
-                    serial_number,
-                    detected.name,
-                    detected_model,
-                )
-            else:
-                _LOGGER.debug("Serial %s matches no known model", serial_number)
-            inverter_type = detected
+        if inverter_type is None and detected:
+            _LOGGER.debug(
+                "Serial %s identifies as %s, model %s",
+                serial_number,
+                detected.name,
+                detected_model,
+            )
+        elif inverter_type is None:
+            _LOGGER.debug("Serial %s matches no known model", serial_number)
         self.serial_number = serial_number
         self.model = model if model is not None else detected_model
-        self.inverter_type = inverter_type | (PM if read_pm else InverterType(0))
+        self.inverter_type = (detected if inverter_type is None else inverter_type) | (
+            PM if read_pm else InverterType(0)
+        )
 
         self.state = InverterState(link)
         self.rating = InverterRating(link)

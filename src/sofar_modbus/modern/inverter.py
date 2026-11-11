@@ -1,14 +1,14 @@
-"""Inverter state, identity and on-grid output — the 0x0400 register block."""
+"""Inverter state, identity and on-grid output, the 0x0400 block."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from enum import IntFlag
 
 from modbus_connection.model import enum, flags, gauge, integer, string, uint32
 
 from ..model import SofarComponent
 from ..variants import HYBRID, PV
-from . import enums
 from .enums import (
     Fault1,
     Fault2,
@@ -41,7 +41,34 @@ from .enums import (
 from .faults import FAULTS_BY_ID, Fault
 
 # Registers 20, 21, 24 and 25 are reserved with no bits assigned.
-_FAULT_REGISTERS = (*range(1, 20), 22, 23, 26, 27, 28, 29, 30)
+_FAULT_ENUMS: tuple[type[IntFlag], ...] = (
+    Fault1,
+    Fault2,
+    Fault3,
+    Fault4,
+    Fault5,
+    Fault6,
+    Fault7,
+    Fault8,
+    Fault9,
+    Fault10,
+    Fault11,
+    Fault12,
+    Fault13,
+    Fault14,
+    Fault15,
+    Fault16,
+    Fault17,
+    Fault18,
+    Fault19,
+    Fault22,
+    Fault23,
+    Fault26,
+    Fault27,
+    Fault28,
+    Fault29,
+    Fault30,
+)
 
 
 def _fault_for(member_name: str) -> Fault | None:
@@ -50,14 +77,14 @@ def _fault_for(member_name: str) -> Fault | None:
 
 
 # IntFlag members hash by value, so bits from different registers
-# collide as dict keys; the register number keys the outer lookup.
-_REGISTER_FAULTS: dict[int, dict[int, Fault]] = {
-    number: {
+# collide as dict keys; the register's enum keys the outer lookup.
+_REGISTER_FAULTS: dict[type[IntFlag], dict[int, Fault]] = {
+    register: {
         member.value: fault
-        for member in getattr(enums, f"Fault{number}")
-        if (fault := _fault_for(member.name)) is not None
+        for name, member in register.__members__.items()
+        if (fault := _fault_for(name)) is not None
     }
-    for number in _FAULT_REGISTERS
+    for register in _FAULT_ENUMS
 }
 
 
@@ -119,10 +146,37 @@ class InverterState(SofarComponent):
         """Every fault the inverter currently reports."""
         return frozenset(
             fault
-            for number in _FAULT_REGISTERS
-            if (value := getattr(self, f"fault_{number}")) is not None
+            for value in (
+                self.fault_1,
+                self.fault_2,
+                self.fault_3,
+                self.fault_4,
+                self.fault_5,
+                self.fault_6,
+                self.fault_7,
+                self.fault_8,
+                self.fault_9,
+                self.fault_10,
+                self.fault_11,
+                self.fault_12,
+                self.fault_13,
+                self.fault_14,
+                self.fault_15,
+                self.fault_16,
+                self.fault_17,
+                self.fault_18,
+                self.fault_19,
+                self.fault_22,
+                self.fault_23,
+                self.fault_26,
+                self.fault_27,
+                self.fault_28,
+                self.fault_29,
+                self.fault_30,
+            )
+            if value is not None
             for member in value
-            if (fault := _REGISTER_FAULTS[number].get(member.value)) is not None
+            if (fault := _REGISTER_FAULTS[type(value)].get(member.value)) is not None
         )
 
 
