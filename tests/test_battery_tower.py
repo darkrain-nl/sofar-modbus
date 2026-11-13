@@ -17,14 +17,22 @@ from modbus_connection import (
     ServerDeviceBusyError,
     ServerDeviceFailureError,
 )
-from modbus_connection.mock import MockModbusUnit, WriteEvent
+from modbus_connection.mock import MockModbusConnection, MockModbusUnit, WriteEvent
 
 from sofar_modbus import SofarInverter
-from sofar_modbus.model import UpdateReport
-from sofar_modbus.modern import READING_COMPONENTS, SETTING_COMPONENTS
+from sofar_modbus.modern import (
+    READING_COMPONENTS,
+    SETTING_COMPONENTS,
+    BatteryTowerSilentError,
+)
 from sofar_modbus.modern.device import BATTERY_PACKS
 
-from .conftest import MODERN_HOLDING, ascii_words, yield_before_reads
+from .conftest import (
+    MODERN_HOLDING,
+    ascii_words,
+    drop_link_on_read,
+    yield_before_reads,
+)
 
 # The ESI-10K-T1 of the 2026-10-16 capture, behind an SH1 serial.
 TOWER_SERIAL = "SH1ES000000001"
@@ -152,7 +160,11 @@ async def test_a_silent_tower_is_no_tower(
     assert BATTERY_PACKS not in tower.expected_components
 
     tower_unit.read_events.clear()
-    assert await tower.async_update_packs() == UpdateReport()
+    report = await tower.async_update_packs()
+    assert not report.updated
+    assert {name: str(err) for name, err in report.failed.items()} == {
+        BATTERY_PACKS: "no battery tower"
+    }
     tower_unit.read_events.clear()
     await tower.async_read_masks()
     assert not any(e.address >= 0x9000 for e in tower_unit.read_events)
@@ -190,7 +202,11 @@ async def test_a_layout_of_no_packs_is_no_tower(
     assert not device.has_battery_tower
     assert device.battery_tower is None
     assert BATTERY_PACKS not in device.expected_components
-    assert await device.async_update_packs() == UpdateReport()
+    report = await device.async_update_packs()
+    assert not report.updated
+    assert {name: str(err) for name, err in report.failed.items()} == {
+        BATTERY_PACKS: "no battery tower"
+    }
 
 
 async def test_a_stored_tower_survives_a_timed_out_probe(
@@ -243,7 +259,11 @@ async def test_a_stored_tower_laying_out_no_packs_is_dropped(
     assert device.battery_packs == {}
     assert BATTERY_PACKS not in device.expected_components
     assert writes == []
-    assert await device.async_update_packs() == UpdateReport()
+    report = await device.async_update_packs()
+    assert not report.updated
+    assert {name: str(err) for name, err in report.failed.items()} == {
+        BATTERY_PACKS: "no battery tower"
+    }
 
 
 async def test_a_retried_setup_that_finds_no_tower_keeps_no_packs(
@@ -409,6 +429,57 @@ async def test_no_pack_answering_fails_the_poll_with_its_error(
     assert set(report.failed) == {BATTERY_PACKS}
     assert isinstance(report.failed[BATTERY_PACKS], ServerDeviceFailureError)
     assert _answered(tower) == {(0, 0): False, (1, 0): False, (2, 0): False}
+
+
+@pytest.mark.parametrize(
+    ("address", "silence"),
+    [
+        pytest.param(0x9022, ModbusTimeoutError("no tower"), id="groups_timeout"),
+        pytest.param(0x9022, GatewayTargetError(), id="groups_gateway"),
+        pytest.param(0x9048, ModbusTimeoutError("no pack"), id="packs_timeout"),
+    ],
+)
+async def test_a_silent_tower_raises_when_asked(
+    tower: SofarInverter,
+    tower_unit: MockModbusUnit,
+    address: int,
+    silence: ModbusError,
+) -> None:
+    await tower.async_ensure_setup()
+    tower_unit.fail_read(address, silence)
+
+    with pytest.raises(BatteryTowerSilentError) as info:
+        await tower.async_update_packs(raise_when_silent=True)
+
+    assert info.value.__cause__ is silence
+
+
+async def test_a_refusing_tower_reports_when_asked(
+    tower: SofarInverter, tower_unit: MockModbusUnit
+) -> None:
+    await tower.async_ensure_setup()
+    tower_unit.fail_read(0x9048, ServerDeviceFailureError())
+
+    report = await tower.async_update_packs(raise_when_silent=True)
+
+    assert isinstance(report.failed[BATTERY_PACKS], ServerDeviceFailureError)
+
+
+async def test_a_silent_tower_on_a_closed_link_raises_its_failure(
+    tower: SofarInverter,
+    mock_modbus_connection: MockModbusConnection,
+    tower_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await tower.async_ensure_setup()
+    drop_link_on_read(monkeypatch, mock_modbus_connection, tower_unit)
+    silence = ModbusTimeoutError("adapter gone")
+    tower_unit.fail_read(0x9022, silence)
+
+    with pytest.raises(ModbusTimeoutError) as info:
+        await tower.async_update_packs(raise_when_silent=True)
+
+    assert info.value is silence
 
 
 async def test_an_offline_group_is_never_selected(

@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from modbus_connection.mock import MockModbusUnit
+from modbus_connection import ModbusError
+from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
 from sofar_modbus import SofarInverter, SofarLegacyInverter
 from sofar_modbus.modern import battery_pack
@@ -56,6 +57,24 @@ def fail_then(
             raise
 
     monkeypatch.setattr(unit, "read_holding_registers", read_then)
+
+
+def drop_link_on_read(
+    monkeypatch: pytest.MonkeyPatch,
+    connection: MockModbusConnection,
+    unit: MockModbusUnit,
+) -> None:
+    """Close the link whenever a read fails, as a dead adapter does."""
+    read = unit.read_holding_registers
+
+    async def read_then_drop(address: int, count: int) -> list[int]:
+        try:
+            return await read(address, count)
+        except ModbusError:
+            connection.simulate_connection_lost()
+            raise
+
+    monkeypatch.setattr(unit, "read_holding_registers", read_then_drop)
 
 
 def yield_before_reads(monkeypatch: pytest.MonkeyPatch, unit: MockModbusUnit) -> None:

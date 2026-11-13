@@ -330,6 +330,29 @@ since asking without one buys a timeout. The meter counters are dropped when
 the energy block's mask denies them, and an unrecognised serial takes its type
 from them.
 
+### A silent inverter
+
+Sofar inverters sleep at night while their adapter stays up. A poll or
+`async_detect()` that times out before anything answers, with the link still
+open, raises `InverterSilentError`, a `ModbusTimeoutError`. A closed link
+raises the plain `ModbusTimeoutError`: then the adapter is gone too.
+
+A gateway answers for a silent inverter with a target failure for every
+component, so that poll returns a report with nothing updated. Pass
+`raise_when_silent=True` to the poll to get `InverterSilentError` for that
+case as well:
+
+```python
+try:
+    await inverter.async_update_readings(raise_when_silent=True)
+except InverterSilentError:
+    ...  # asleep, not broken
+```
+
+`async_update_packs(raise_when_silent=True)` raises `BatteryTowerSilentError`
+when the BTS tower answers with silence on an open link. Both errors derive
+from `SilentError`, so one `except SilentError` catches either.
+
 ## Checking a real inverter
 
 `script/query.py` reads one inverter once and prints every value it serves,
