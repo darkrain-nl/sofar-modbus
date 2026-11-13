@@ -24,7 +24,7 @@ from modbus_connection import (
 from modbus_connection.mock import MockModbusUnit
 
 from sofar_modbus import SofarInverter
-from sofar_modbus.modern import async_detect_type
+from sofar_modbus.modern import InverterSilentError, async_detect_type
 from sofar_modbus.variants import (
     EPS,
     GEN,
@@ -329,7 +329,7 @@ async def test_a_missed_energy_mask_is_asked_again(
     """A waking inverter can drop one read, which denies nothing yet."""
     mock_modbus_unit.holding[0x0680] = UNMETERED_ENERGY_MASK
     mock_modbus_unit.fail_read(0x0680, error)
-    with pytest.raises(type(error)):
+    with pytest.raises((type(error), InverterSilentError)):
         await pv_inverter.async_update()
     mock_modbus_unit.fail_read(0x0680, None)
     await pv_inverter.async_update()
@@ -395,7 +395,7 @@ async def test_a_missed_charge_cutoff_mask_is_asked_again(
     mock_modbus_unit.holding[0x1040] = CHARGE_CUTOFF_MASK
     mock_modbus_unit.holding[0x105B] = [95]
     mock_modbus_unit.fail_read(0x1040, error)
-    with pytest.raises(type(error)):
+    with pytest.raises((type(error), InverterSilentError)):
         await hybrid.async_update()
     mock_modbus_unit.fail_read(0x1040, None)
     await hybrid.async_update()
@@ -575,7 +575,7 @@ async def test_one_unanswered_block_is_asked_again(
     """A dropped frame is no verdict, so it must not settle the type."""
     device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
     mock_modbus_unit.fail_read(silent, error)
-    with pytest.raises(type(error)):
+    with pytest.raises((type(error), InverterSilentError)):
         await device.async_update()
     mock_modbus_unit.fail_read(silent, None)
     await device.async_update()
@@ -717,7 +717,7 @@ async def test_a_missed_pv_mask_is_asked_again(
 ) -> None:
     device = known_inverter(mock_modbus_unit, ESI_10K_PV_MASK)
     mock_modbus_unit.fail_read(0x0580, error)
-    with pytest.raises(type(error)):
+    with pytest.raises((type(error), InverterSilentError)):
         await device.async_update()
     mock_modbus_unit.fail_read(0x0580, None)
     await device.async_update()
@@ -818,7 +818,7 @@ async def test_an_unanswered_mask_is_no_verdict(
     """A sleeping inverter must not read as an unrecognized one."""
     device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
     mock_modbus_unit.fail_read(0x0480, error)
-    with pytest.raises(type(error)):
+    with pytest.raises((type(error), InverterSilentError)):
         await device.async_update()
     assert not device.unrecognized
 

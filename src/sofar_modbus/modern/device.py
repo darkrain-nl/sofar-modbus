@@ -226,7 +226,7 @@ class BatteryTowerSilentError(SilentError):
 
 @contextlib.contextmanager
 def _silent_on_open_link(
-    unit: ModbusUnit | TimedUnit, *, raise_when_silent: bool
+    unit: ModbusUnit | TimedUnit, *, keep_gateway_error: bool
 ) -> Iterator[None]:
     """Raise a silence as ``InverterSilentError`` while the link is open."""
     try:
@@ -234,8 +234,8 @@ def _silent_on_open_link(
     except _SILENCES as err:
         if not unit.connected:
             raise
-        # Opt-in, so callers catching the raw gateway error keep it.
-        if not raise_when_silent and isinstance(err, GatewayTargetError):
+        # Detection keeps it, so the config flow's message stays.
+        if keep_gateway_error and isinstance(err, GatewayTargetError):
             raise
         # Keep the text: callers that predate this error print it.
         raise InverterSilentError(*err.args) from err
@@ -420,7 +420,7 @@ class SofarInverter(Device):
         """Build an inverter for a caller that does not know its serial."""
         unit.require_timeout(timeout)
         identity = Identity(unit)
-        with _silent_on_open_link(unit, raise_when_silent=False):
+        with _silent_on_open_link(unit, keep_gateway_error=True):
             await identity.async_update(notify=False)
         serial_number = identity.serial_number
         assert serial_number is not None
@@ -561,13 +561,13 @@ class SofarInverter(Device):
             if matches(self.inverter_type, self._components[name].applies_to)
         ]
 
-    async def async_ensure_setup(self, *, raise_when_silent: bool = False) -> None:
+    async def async_ensure_setup(self) -> None:
         """Run setup once, one caller at a time.
 
         Overlapping runs would edit each other's component lists.
         """
         async with self._setup_lock:
-            with _silent_on_open_link(self._link, raise_when_silent=raise_when_silent):
+            with _silent_on_open_link(self._link, keep_gateway_error=False):
                 await super().async_ensure_setup()
 
     async def _async_setup(self) -> None:
@@ -806,40 +806,29 @@ class SofarInverter(Device):
         self._identity_pending = True
         return failure
 
-    async def async_update_readings(
-        self, *, raise_when_silent: bool = False
-    ) -> UpdateReport:
+    async def async_update_readings(self) -> UpdateReport:
         """Refresh telemetry measurements (power, energy, battery, state)."""
-        return await self._async_tuned_poll(
-            readings=True, raise_when_silent=raise_when_silent
-        )
+        return await self._async_tuned_poll(readings=True)
 
-    async def async_update_settings(
-        self, *, raise_when_silent: bool = False
-    ) -> UpdateReport:
+    async def async_update_settings(self) -> UpdateReport:
         """Refresh configuration registers (charger mode, limits, battery config).
 
         Split from telemetry: configuration only changes when written.
         """
-        return await self._async_tuned_poll(
-            settings=True, raise_when_silent=raise_when_silent
-        )
+        return await self._async_tuned_poll(settings=True)
 
-    async def async_update(self, *, raise_when_silent: bool = False) -> UpdateReport:
+    async def async_update(self) -> UpdateReport:
         """Refresh readings and settings together in one report.
 
         One poll, so listeners see both halves at once.
         """
-        return await self._async_tuned_poll(
-            readings=True, settings=True, raise_when_silent=raise_when_silent
-        )
+        return await self._async_tuned_poll(readings=True, settings=True)
 
     async def _async_tuned_poll(
         self,
         *,
         readings: bool = False,
         settings: bool = False,
-        raise_when_silent: bool = False,
     ) -> UpdateReport:
         """Poll, retrying what failed once, and tell the tuner how it went.
 
@@ -847,12 +836,12 @@ class SofarInverter(Device):
         """
         report = UpdateReport()
         try:
-            await self.async_ensure_setup(raise_when_silent=raise_when_silent)
+            await self.async_ensure_setup()
             names = [
                 *(self._readings if readings else ()),
                 *(self._settings if settings else ()),
             ]
-            with _silent_on_open_link(self._link, raise_when_silent=raise_when_silent):
+            with _silent_on_open_link(self._link, keep_gateway_error=False):
                 await self._async_read(names, report)
             first = dict(report.failed)
             if report.failed and report.updated:
@@ -866,10 +855,9 @@ class SofarInverter(Device):
         self._tuner.observe(
             UpdateReport(set(report.updated), _both_attempts(first, report.failed))
         )
-        # Opt-in, so callers built on an empty report keep it.
+        # A gateway answers for a sleeping inverter on every component.
         if (
-            raise_when_silent
-            and not report.updated
+            not report.updated
             and report.failed
             and all(isinstance(err, _SILENCES) for err in report.failed.values())
         ):
@@ -947,23 +935,18 @@ class SofarInverter(Device):
             self.battery_pack.notify()
         return self.battery_pack
 
-    async def async_update_packs(
-        self, *, raise_when_silent: bool = False
-    ) -> UpdateReport:
+    async def async_update_packs(self) -> UpdateReport:
         """Refresh each pack of the BTS battery tower, one at a time.
 
         A failing pack clears its own ``answered``; the rest still read.
         """
-        await self.async_ensure_setup(raise_when_silent=raise_when_silent)
+        await self.async_ensure_setup()
         # A caller still polling packs learns why none came back.
         if not self.has_battery_tower:
             return UpdateReport(failed={BATTERY_PACKS: ModbusError("no battery tower")})
         async with self._pack_lock:
             report = await self._async_read_packs()
-        # Opt-in, so callers built on an empty report keep it.
-        if raise_when_silent and isinstance(
-            err := report.failed.get(BATTERY_PACKS), _SILENCES
-        ):
+        if isinstance(err := report.failed.get(BATTERY_PACKS), _SILENCES):
             if not self.connected:
                 raise err
             raise BatteryTowerSilentError("the battery tower does not answer") from err
