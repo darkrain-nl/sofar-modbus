@@ -12,16 +12,13 @@ from typing import TYPE_CHECKING, Final, Self
 
 from modbus_connection import (
     GatewayTargetError,
-    IllegalDataAddressError,
-    IllegalDataValueError,
-    IllegalFunctionError,
     ModbusConnectionError,
     ModbusError,
     ModbusTimeoutError,
 )
 from modbus_connection.model import Device, Raw
 
-from ..model import UpdateReport
+from ..model import REFUSALS, SofarComponent, UpdateReport
 from ..tuning import LinkStats, LinkTuner, LinkTuning, TimedUnit
 from ..variants import (
     BAT_BTS,
@@ -126,7 +123,6 @@ _IDENTITY_ATTEMPTS = 3
 _FAULT_LOG_ATTEMPTS = 3
 
 _ONLINE_GROUPS_REGISTER = 0x9022  # bit n set: group n answers the BMS
-_REFUSALS = (IllegalFunctionError, IllegalDataAddressError, IllegalDataValueError)
 # A gateway reports a silent device as a target failure.
 _SILENCES = (ModbusTimeoutError, GatewayTargetError)
 # The inquiry word addresses groups and packs in four bits each.
@@ -190,7 +186,7 @@ SETTING_COMPONENTS: Final[tuple[str, ...]] = (
     "passive",
 )
 
-# Ported from the plugin's async_determineInverterType; ordered
+# Kept in step with the plugin's async_determineInverterType; ordered
 # longest-prefix-first so the first match is the most specific one.
 _SERIAL_PREFIXES: tuple[tuple[str, InverterType, str | None], ...] = (
     ("SP1ES120N6", HYBRID | X3, "HYD20KTL-3P"),
@@ -270,7 +266,7 @@ def identify(serial: str) -> tuple[InverterType, str | None]:
 class SofarInverter(Device):
     """A current-generation Sofar inverter reached through a ``ModbusUnit``.
 
-    Build the unit from RTU -- ASCII framing over TCP is unsupported.
+    Build the unit from RTU: ASCII framing over TCP is unsupported.
     """
 
     def __init__(
@@ -295,20 +291,20 @@ class SofarInverter(Device):
         self._link = link
         self._tuner = LinkTuner(link)
         detected, detected_model = identify(serial_number)
-        if inverter_type is None:
-            if detected:
-                _LOGGER.debug(
-                    "Serial %s identifies as %s, model %s",
-                    serial_number,
-                    detected.name,
-                    detected_model,
-                )
-            else:
-                _LOGGER.debug("Serial %s matches no known model", serial_number)
-            inverter_type = detected
+        if inverter_type is None and detected:
+            _LOGGER.debug(
+                "Serial %s identifies as %s, model %s",
+                serial_number,
+                detected.name,
+                detected_model,
+            )
+        elif inverter_type is None:
+            _LOGGER.debug("Serial %s matches no known model", serial_number)
         self.serial_number = serial_number
         self.model = model if model is not None else detected_model
-        self.inverter_type = inverter_type | (PM if read_pm else InverterType(0))
+        self.inverter_type = (detected if inverter_type is None else inverter_type) | (
+            PM if read_pm else InverterType(0)
+        )
 
         self.state = InverterState(link)
         self.rating = InverterRating(link)
@@ -347,13 +343,55 @@ class SofarInverter(Device):
         self._battery_tower = BatteryTower(link)
         self._battery_packs: dict[tuple[int, int], BatteryPack] = {}
 
+        # What each name in READING_ and SETTING_COMPONENTS polls.
+        self._components: dict[str, SofarComponent] = {
+            "state": self.state,
+            "grid": self.grid,
+            "offgrid": self.offgrid,
+            "offgrid_single_phase": self.offgrid_single_phase,
+            "offgrid_three_phase": self.offgrid_three_phase,
+            "pv_1_2": self.pv_1_2,
+            "pv_3": self.pv_3,
+            "pv_4": self.pv_4,
+            "pv_5_6": self.pv_5_6,
+            "pv_7_8": self.pv_7_8,
+            "pv_9_10": self.pv_9_10,
+            "battery_1_2": self.battery_1_2,
+            "battery_3_8": self.battery_3_8,
+            "battery_totals": self.battery_totals,
+            "energy": self.energy,
+            "meter_energy": self.meter_energy,
+            "battery_energy": self.battery_energy,
+            "fault_log": self.fault_log,
+            "rtc_sync": self.rtc_sync,
+            "feed_in": self.feed_in,
+            "eps": self.eps,
+            "battery_active_control": self.battery_active_control,
+            "parallel": self.parallel,
+            "battery_config_id": self.battery_config_id,
+            "battery_config": self.battery_config,
+            "battery_charge_cutoff": self.battery_charge_cutoff,
+            "remote": self.remote,
+            "active_power_control": self.active_power_control,
+            "charger": self.charger,
+            "passive": self.passive,
+        }
         self._pv_strings = {
-            number: PvString(number, name, getattr(self, name))
-            for number, name in PV_STRING_COMPONENTS.items()
+            number: PvString(number, component)
+            for component in (
+                self.pv_1_2,
+                self.pv_3,
+                self.pv_4,
+                self.pv_5_6,
+                self.pv_7_8,
+                self.pv_9_10,
+            )
+            for number in component.strings
         }
         self._battery_strings = {
-            number: BatteryString(number, name, getattr(self, name))
-            for number, name in BATTERY_STRING_COMPONENTS.items()
+            number: BatteryString(number, component)
+            for component in (self.battery_1_2, self.battery_3_8)
+            for number in component.strings
         }
 
         self._readings: list[str] = []
@@ -471,7 +509,7 @@ class SofarInverter(Device):
         return frozenset(
             number
             for number, string in self._battery_strings.items()
-            if string.component_name in served and string.voltage
+            if BATTERY_STRING_COMPONENTS[number] in served and string.voltage
         )
 
     @property
@@ -520,7 +558,7 @@ class SofarInverter(Device):
         return [
             name
             for name in names
-            if matches(self.inverter_type, getattr(self, name).applies_to)
+            if matches(self.inverter_type, self._components[name].applies_to)
         ]
 
     async def async_ensure_setup(self, *, raise_when_silent: bool = False) -> None:
@@ -659,7 +697,7 @@ class SofarInverter(Device):
                 await self.fault_log.async_update(notify=False)
             except ModbusConnectionError:
                 raise
-            except (IllegalDataAddressError, IllegalFunctionError) as err:
+            except REFUSALS as err:
                 return f"the event log is refused: {err!r}"
             except ModbusError as err:
                 failure = err
@@ -673,7 +711,7 @@ class SofarInverter(Device):
         """Whether this inverter answers the off-grid (EPS) block."""
         try:
             await self.offgrid.async_update(notify=False)
-        except (IllegalDataAddressError, IllegalFunctionError) as err:
+        except REFUSALS as err:
             _LOGGER.debug(
                 "Inverter %s refuses the off-grid block: %s", self.serial_number, err
             )
@@ -690,7 +728,7 @@ class SofarInverter(Device):
             return False
         try:
             laid_out = await self._async_read_tower_layout()
-        except _REFUSALS as err:
+        except REFUSALS as err:
             _LOGGER.debug(
                 "Inverter %s refuses the battery tower block: %s",
                 self.serial_number,
@@ -822,8 +860,8 @@ class SofarInverter(Device):
                 await self._async_read(first, report)
             if self._identity_pending and report.updated:
                 await self._async_try_identity(1)
-        except ModbusError as err:
-            self._tuner.observe_failure(err)
+        except ModbusError:
+            self._tuner.observe_failure()
             raise
         self._tuner.observe(
             UpdateReport(set(report.updated), _both_attempts(first, report.failed))
@@ -844,7 +882,7 @@ class SofarInverter(Device):
         # Listeners fire once both attempts are in, so they see one poll.
         for name in names:
             if name in report.updated:
-                getattr(self, name).notify()
+                self._components[name].notify()
         return report
 
     async def _async_read(self, names: Iterable[str], report: UpdateReport) -> None:
@@ -854,7 +892,7 @@ class SofarInverter(Device):
         """
         for name in names:
             try:
-                await getattr(self, name).async_update(notify=False)
+                await self._components[name].async_update(notify=False)
             except ModbusConnectionError:
                 raise
             except ModbusTimeoutError as err:
@@ -952,7 +990,7 @@ class SofarInverter(Device):
         failure = ModbusError("no battery pack answered")
         for pack in self._sweep_order():
             if not online >> pack.group_nr & 1:
-                self._note_pack(pack.pack_nr, pack.group_nr, "its group is offline")
+                self._note_pack(pack, "its group is offline")
                 continue
             try:
                 await self._async_read_pack(pack)
@@ -988,52 +1026,50 @@ class SofarInverter(Device):
                     _ONLINE_GROUPS_REGISTER, 1
                 )
             )[0]
-        except _REFUSALS:
+        except REFUSALS:
             return (1 << _ADDRESSABLE) - 1
 
     async def _async_read_pack(self, pack: BatteryPack) -> None:
         """Select ``pack`` and read it, flagging whether the tower served it."""
         pack.answered = False
         try:
-            await pack.async_select(pack.pack_nr, pack.group_nr)
+            await pack.async_select()
             await pack.async_update(notify=False)
         except ModbusConnectionError:
             raise  # a dead link says nothing about the pack
         except ModbusError as err:
-            self._note_pack(pack.pack_nr, pack.group_nr, repr(err))
+            self._note_pack(pack, repr(err))
             raise
-        served = pack.pack_id
+        served = pack.served_place
         assert served is not None  # pack_id declares no nan
-        pack.answered = served & 0x0FFF == pack.group_nr << 8 | pack.pack_nr
+        pack.answered = served == (pack.group_nr, pack.pack_nr)
         if pack.answered:
-            self._served_place = pack.group_nr, pack.pack_nr
-            self._note_pack(pack.pack_nr, pack.group_nr, None)
+            self._served_place = served
+            self._note_pack(pack, None)
         else:
             self._note_pack(
-                pack.pack_nr,
-                pack.group_nr,
-                f"the tower serves pack {served & 0xFF} of group {served >> 8 & 0xF}",
+                pack, f"the tower serves pack {served[1]} of group {served[0]}"
             )
 
-    def _note_pack(self, pack_nr: int, group_nr: int, silence: str | None) -> None:
+    def _note_pack(self, pack: BatteryPack, silence: str | None) -> None:
         """Log a pack starting or stopping to answer."""
         answers = silence is None
-        if self._packs_answering.get((group_nr, pack_nr)) == answers:
+        if self._packs_answering.get((pack.group_nr, pack.pack_nr)) == answers:
             return
-        self._packs_answering[group_nr, pack_nr] = answers
+        self._packs_answering[pack.group_nr, pack.pack_nr] = answers
         if answers:
             _LOGGER.debug(
                 "Inverter %s: battery pack %d of group %d answers",
                 self.serial_number,
-                pack_nr,
-                group_nr,
+                pack.pack_nr,
+                pack.group_nr,
             )
         else:
             _LOGGER.debug(
                 "Inverter %s: battery pack %d of group %d does not answer: %s",
                 self.serial_number,
-                pack_nr,
-                group_nr,
+                pack.pack_nr,
+                pack.group_nr,
                 silence,
             )
 
@@ -1139,15 +1175,15 @@ class SofarInverter(Device):
                 self.serial_number,
             )
             return
+        # _holds() raised above for any wanted address outside the read.
         await self.modbus_unit.write_registers(
             _BAT_CONFIG_REGISTER,
-            list(
-                {
-                    **current,
-                    **wanted,
-                    _BAT_CONFIG_CONTROL: _BAT_CONFIG_COMMIT,
-                }.values()
-            ),
+            [
+                _BAT_CONFIG_COMMIT
+                if address == _BAT_CONFIG_CONTROL
+                else wanted.get(address, word)
+                for address, word in current.items()
+            ],
         )
         if (status := await self._async_battery_config_status()) != (
             BatConfigWriteStatus.SUCCESS

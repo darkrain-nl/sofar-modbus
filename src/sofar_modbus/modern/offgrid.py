@@ -1,4 +1,4 @@
-"""Off-grid (EPS) output — the 0x0500 register block, read only when EPS is on."""
+"""Off-grid (EPS) output, the 0x0500 block, read only with EPS on."""
 
 from __future__ import annotations
 

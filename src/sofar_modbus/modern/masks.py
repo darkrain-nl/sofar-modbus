@@ -7,14 +7,12 @@ from typing import TYPE_CHECKING
 
 from modbus_connection import (
     GatewayTargetError,
-    IllegalDataAddressError,
-    IllegalDataValueError,
-    IllegalFunctionError,
     ModbusConnectionError,
     ModbusError,
     ModbusTimeoutError,
 )
 
+from ..model import REFUSALS
 from ..variants import (
     BAT_BTS,
     GEN,
@@ -117,7 +115,7 @@ async def _async_read_mask(unit: ModbusUnit, base: int) -> int | None:
     """The block's mask, or ``None`` if refused; other errors propagate."""
     try:
         registers = await unit.read_holding_registers(base, MASK_REGISTERS)
-    except (IllegalFunctionError, IllegalDataAddressError, IllegalDataValueError):
+    except REFUSALS:
         return None
     value = 0
     for register in registers:
@@ -130,32 +128,21 @@ async def async_serves(unit: ModbusUnit, address: int) -> bool | None:
 
     ``None`` on a refusal or an unusable mask; other errors propagate.
     """
-    base = address - address % BLOCK_SIZE
-    return _declares(await _async_read_mask(unit, base), base, address)
+    return _declares(
+        await _async_read_mask(unit, address - address % BLOCK_SIZE), address
+    )
 
 
 async def async_detect_type(unit: ModbusUnit) -> InverterType | None:
     """The type the model's masks declare, ``None`` if one is unusable."""
-    masks: dict[int, int | None] = {}
-
-    async def mask(base: int) -> int | None:
-        if base not in masks:
-            # A missed answer is no verdict, so it must not settle a type.
-            masks[base] = await _async_read_mask(unit, base)
-        return masks[base]
-
-    async def serves(address: int) -> bool | None:
-        base = address - address % BLOCK_SIZE
-        return _declares(await mask(base), base, address)
-
-    if (three_phase := await serves(_PHASE_S_VOLTAGE)) is None:
+    # A missed answer is no verdict, so it propagates to the caller.
+    if (three_phase := await async_serves(unit, _PHASE_S_VOLTAGE)) is None:
         return None
-    if (hybrid := await serves(_BATTERY_1_VOLTAGE)) is None:
+    if (hybrid := await async_serves(unit, _BATTERY_1_VOLTAGE)) is None:
         return None
-    if (tier := _pv_tier(await mask(_PV_STRING_BLOCK))) is None:
+    if (tier := _pv_tier(await _async_read_mask(unit, _PV_STRING_BLOCK))) is None:
         return None
-    detected = GEN | (X3 if three_phase else X1) | (HYBRID if hybrid else PV)
-    detected |= tier
+    detected = GEN | (X3 if three_phase else X1) | (HYBRID if hybrid else PV) | tier
     if not hybrid:
         return detected
     # A tower's usable mask declares its own base; no tower stays silent.
@@ -180,15 +167,15 @@ async def async_read_pv_tier(unit: ModbusUnit) -> InverterType | None:
 def _pv_tier(mask: int | None) -> InverterType | None:
     """The tier of the highest PV string ``mask`` declares valid."""
     for address, tier in _PV_STRING_TIERS:
-        if (served := _declares(mask, _PV_STRING_BLOCK, address)) is None:
+        if (served := _declares(mask, address)) is None:
             return None
         if served:
             return tier
     return InverterType(0)
 
 
-def _declares(mask: int | None, base: int, address: int) -> bool | None:
+def _declares(mask: int | None, address: int) -> bool | None:
     """Whether ``mask`` declares ``address`` valid; ``None`` if unusable."""
     if mask is None or mask & _SELF_BITS != _SELF_BITS:
         return None
-    return bool(mask >> (address - base) & 1)
+    return bool(mask >> address % BLOCK_SIZE & 1)

@@ -36,7 +36,6 @@ class RtcSyncResult(SofarComponent):
     applies_to = PV | HYBRID
 
     sync_rtc_result = enum(0x100A, SyncRtcResult, signed=False)
-    """Update System Time Operation Result."""
 
 
 class FeedInLimit(SofarComponent):
@@ -46,7 +45,6 @@ class FeedInLimit(SofarComponent):
 
     feedin_limitation_mode = enum(0x1023, FeedinLimitationMode, signed=False)
     feedin_max_power = gauge(0x1024, 100, signed=False, unit="W")
-    """FeedIn: Maximum Power."""
 
     async def async_write_limit(
         self, mode: FeedinLimitationMode, max_power: int
@@ -57,7 +55,10 @@ class FeedInLimit(SofarComponent):
         """
         if max_power % 100:
             raise ValueError(f"feed-in power {max_power} is not a multiple of 100 W")
-        await self._unit.write_registers(0x1023, [int(mode), max_power // 100])
+        await self._unit.write_registers(
+            FeedInLimit.feedin_limitation_mode.address,
+            [int(mode), max_power // 100],
+        )
 
 
 class ActivePowerControl(SofarComponent):
@@ -82,8 +83,15 @@ class ActivePowerControl(SofarComponent):
         """
         if not 0 <= limit_pct <= 100:
             raise ValueError(f"active power limit {limit_pct}% is outside 0-100")
-        control = PowerControlFlags.ACTIVE_POWER if enabled else PowerControlFlags(0)
-        await self._unit.write_registers(0x1105, [int(control), round(limit_pct * 10)])
+        await self._unit.write_registers(
+            ActivePowerControl.power_control.address,
+            [
+                int(
+                    PowerControlFlags.ACTIVE_POWER if enabled else PowerControlFlags(0)
+                ),
+                round(limit_pct * 10),
+            ],
+        )
 
 
 class EpsControl(SofarComponent):
@@ -92,16 +100,14 @@ class EpsControl(SofarComponent):
     applies_to = HYBRID | EPS
 
     eps_control = enum(0x1029, EpsControlMode, signed=False)
-    """EPS Mode."""
     passive_eps_wait_time = integer(0x102A, signed=False, unit="s")
-    """EPS Wait Time."""
 
     async def async_write_control(self, mode: EpsControlMode) -> None:
         """Set the EPS mode.
 
         The wait time is reserved, so it goes out as 0.
         """
-        await self._unit.write_registers(0x1029, [int(mode), 0])
+        await self._unit.write_registers(EpsControl.eps_control.address, [int(mode), 0])
 
 
 class BatteryActiveControl(SofarComponent):
@@ -110,7 +116,6 @@ class BatteryActiveControl(SofarComponent):
     applies_to = HYBRID
 
     battery_active_control = boolean(0x102B)
-    """Battery Active Control (the plugin renders it Disabled/Enabled)."""
 
 
 class ParallelControl(SofarComponent):
@@ -119,9 +124,7 @@ class ParallelControl(SofarComponent):
     applies_to = X3 | PV | HYBRID | PM
 
     parallel_control = boolean(0x1035)
-    """Parallel Control (the plugin renders it Disabled/Enabled)."""
     parallel_masterslave = enum(0x1036, ParallelMasterslave, signed=False)
-    """Parallel Master-Salve."""
     parallel_address = integer(
         0x1037, signed=False, writable=_parallel_address, force_fc16=True
     )
@@ -164,11 +167,11 @@ class BatteryConfig(SofarComponent):
     bat_config_address_3 = integer(0x1055, signed=False)
     bat_config_address_4 = integer(0x1056, signed=False)
     bat_config_tempco = gauge(0x1057, 0.1, signed=True, unit="mV/Cell")
-    """BatConfig: Lead Acid Battery Temperature Compensation Factor."""
+    """Temperature compensation of a lead-acid battery."""
     bat_config_rated_battery_voltage_2 = gauge(0x1058, 0.1, signed=False, unit="V")
-    """BatConfig: Lead Acid Battery Recovery Buffer."""
+    """The lead-acid recovery buffer, whatever the name says."""
     bat_config_voltage_float = gauge(0x105A, 0.1, signed=False, unit="V")
-    """BatConfig: Lead Acid Battery Float Voltage."""
+    """Float voltage of a lead-acid battery."""
 
     @property
     def on_grid_discharge_cutoff_soc(self) -> int | None:
@@ -200,7 +203,6 @@ class BatteryChargeCutoff(SofarComponent):
     applies_to = HYBRID
 
     bat_config_charge_cutoff_soc = integer(0x105B, signed=False, unit="%")
-    """BatConfig: Charge Cut-off SOC."""
 
 
 class RemoteControl(SofarComponent):
@@ -237,15 +239,13 @@ class PassiveMode(SofarComponent):
     applies_to = HYBRID
 
     passive_mode_timeout = integer(0x1184, signed=False)
-    """Passive: Timeout."""
     passive_mode_timeout_action = enum(0x1185, PassiveModeTimeoutAction, signed=False)
-    """Passive: Timeout Action."""
     passive_mode_grid_power = int32(0x1187)
-    """Passive: Desired Grid Power."""
+    """Grid power setpoint, in W."""
     passive_mode_battery_power_min = int32(0x1189)
-    """Passive: Minimum Battery Power."""
+    """Lowest battery power allowed, in W."""
     passive_mode_battery_power_max = int32(0x118B)
-    """Passive: Maximum Battery Power."""
+    """Highest battery power allowed, in W."""
 
     async def async_write_timeout(
         self, timeout: int, action: PassiveModeTimeoutAction
@@ -253,7 +253,9 @@ class PassiveMode(SofarComponent):
         """Set how long a passive-mode command holds, and what happens after."""
         if not 0 <= timeout <= 0xFFFF:
             raise ValueError(f"passive-mode timeout {timeout} is outside 0-65535")
-        await self._unit.write_registers(0x1184, [timeout, int(action)])
+        await self._unit.write_registers(
+            PassiveMode.passive_mode_timeout.address, [timeout, int(action)]
+        )
 
     async def async_write_power(
         self, grid_power: int, battery_min: int, battery_max: int
@@ -262,7 +264,11 @@ class PassiveMode(SofarComponent):
 
         The device takes the three int32 values only as one block.
         """
-        words: list[int] = []
-        for value in (grid_power, battery_min, battery_max):
-            words += encode_int(value, count=2)
-        await self._unit.write_registers(0x1187, words)
+        await self._unit.write_registers(
+            PassiveMode.passive_mode_grid_power.address,
+            [
+                word
+                for value in (grid_power, battery_min, battery_max)
+                for word in encode_int(value, count=2)
+            ],
+        )

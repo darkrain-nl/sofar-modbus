@@ -7,6 +7,7 @@ import logging
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
+    IllegalDataValueError,
     IllegalFunctionError,
     ServerDeviceFailureError,
 )
@@ -102,11 +103,14 @@ async def test_the_eps_probe_detects_presence(
     assert EPS in inverter.inverter_type
 
 
-@pytest.mark.parametrize("error", [IllegalDataAddressError(), IllegalFunctionError()])
+@pytest.mark.parametrize(
+    "error",
+    [IllegalFunctionError(), IllegalDataAddressError(), IllegalDataValueError()],
+)
 async def test_the_eps_probe_detects_absence(
     mock_modbus_unit: MockModbusUnit, error: Exception
 ) -> None:
-    """Either exception code means the EPS registers do not exist."""
+    """Any refusal means the EPS registers do not exist."""
     mock_modbus_unit.holding.update(LEGACY_HOLDING)
     mock_modbus_unit.fail_read(0x0216, error)
     inverter = SofarLegacyInverter(mock_modbus_unit, serial_number=LEGACY_HYBRID_SERIAL)

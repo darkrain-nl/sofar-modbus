@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import ClassVar
 
 from modbus_connection.model import RegisterField, gauge
@@ -10,11 +11,14 @@ from modbus_connection.model import RegisterField, gauge
 from ..model import SofarComponent
 from ..variants import GEN, HYBRID, MPPT3, MPPT4, MPPT6, MPPT8, MPPT10, PV
 
-type PvStringFields = tuple[
-    RegisterField[float],  # voltage
-    RegisterField[float],  # current
-    RegisterField[float],  # power
-]
+
+@dataclass(frozen=True, slots=True)
+class PvStringFields:
+    """The fields one PV string reads from."""
+
+    voltage: RegisterField[float]
+    current: RegisterField[float]
+    power: RegisterField[float]
 
 
 class PvStringComponent(SofarComponent):
@@ -26,33 +30,26 @@ class PvStringComponent(SofarComponent):
 class PvString:
     """One PV string's readings, from the component serving it."""
 
-    def __init__(
-        self, number: int, component_name: str, component: PvStringComponent
-    ) -> None:
+    def __init__(self, number: int, component: PvStringComponent) -> None:
         """Initialize the view."""
         self.number = number
-        self.component_name = component_name
         self.component = component
-        (
-            self._voltage,
-            self._current,
-            self._power,
-        ) = component.strings[number]
+        self._fields = component.strings[number]
 
     @property
     def voltage(self) -> float | None:
         """The string's voltage, in V."""
-        return self._voltage.__get__(self.component)
+        return self._fields.voltage.__get__(self.component)
 
     @property
     def current(self) -> float | None:
         """The string's current, in A."""
-        return self._current.__get__(self.component)
+        return self._fields.current.__get__(self.component)
 
     @property
     def power(self) -> float | None:
         """The string's power, in kW."""
-        return self._power.__get__(self.component)
+        return self._fields.power.__get__(self.component)
 
 
 class PvStrings1To2(PvStringComponent):
@@ -69,8 +66,16 @@ class PvStrings1To2(PvStringComponent):
     pv_power_total = gauge(0x05C4, 0.1, signed=False, unit="kW")
 
     strings = {
-        1: (pv_voltage_1, pv_current_1, pv_power_1),
-        2: (pv_voltage_2, pv_current_2, pv_power_2),
+        1: PvStringFields(
+            voltage=pv_voltage_1,
+            current=pv_current_1,
+            power=pv_power_1,
+        ),
+        2: PvStringFields(
+            voltage=pv_voltage_2,
+            current=pv_current_2,
+            power=pv_power_2,
+        ),
     }
 
 
@@ -84,7 +89,11 @@ class PvString3(PvStringComponent):
     pv_power_3 = gauge(0x058C, 0.01, signed=False, unit="kW")
 
     strings = {
-        3: (pv_voltage_3, pv_current_3, pv_power_3),
+        3: PvStringFields(
+            voltage=pv_voltage_3,
+            current=pv_current_3,
+            power=pv_power_3,
+        ),
     }
 
 
@@ -98,7 +107,11 @@ class PvString4(PvStringComponent):
     pv_power_4 = gauge(0x058F, 0.01, signed=False, unit="kW")
 
     strings = {
-        4: (pv_voltage_4, pv_current_4, pv_power_4),
+        4: PvStringFields(
+            voltage=pv_voltage_4,
+            current=pv_current_4,
+            power=pv_power_4,
+        ),
     }
 
 
@@ -115,8 +128,16 @@ class PvStrings5To6(PvStringComponent):
     pv_power_6 = gauge(0x0595, 0.01, signed=False, unit="kW")
 
     strings = {
-        5: (pv_voltage_5, pv_current_5, pv_power_5),
-        6: (pv_voltage_6, pv_current_6, pv_power_6),
+        5: PvStringFields(
+            voltage=pv_voltage_5,
+            current=pv_current_5,
+            power=pv_power_5,
+        ),
+        6: PvStringFields(
+            voltage=pv_voltage_6,
+            current=pv_current_6,
+            power=pv_power_6,
+        ),
     }
 
 
@@ -133,8 +154,16 @@ class PvStrings7To8(PvStringComponent):
     pv_power_8 = gauge(0x059B, 0.01, signed=False, unit="kW")
 
     strings = {
-        7: (pv_voltage_7, pv_current_7, pv_power_7),
-        8: (pv_voltage_8, pv_current_8, pv_power_8),
+        7: PvStringFields(
+            voltage=pv_voltage_7,
+            current=pv_current_7,
+            power=pv_power_7,
+        ),
+        8: PvStringFields(
+            voltage=pv_voltage_8,
+            current=pv_current_8,
+            power=pv_power_8,
+        ),
     }
 
 
@@ -151,6 +180,14 @@ class PvStrings9To10(PvStringComponent):
     pv_power_10 = gauge(0x05A1, 0.01, signed=False, unit="kW")
 
     strings = {
-        9: (pv_voltage_9, pv_current_9, pv_power_9),
-        10: (pv_voltage_10, pv_current_10, pv_power_10),
+        9: PvStringFields(
+            voltage=pv_voltage_9,
+            current=pv_current_9,
+            power=pv_power_9,
+        ),
+        10: PvStringFields(
+            voltage=pv_voltage_10,
+            current=pv_current_10,
+            power=pv_power_10,
+        ),
     }

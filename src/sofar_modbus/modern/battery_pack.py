@@ -177,25 +177,37 @@ class BatteryPack(SofarComponent):
         except ValueError:  # an unset clock reports out-of-range parts
             return None
 
-    async def async_select(self, pack_nr: int, group_nr: int = 0) -> None:
-        """Point the block at one pack and wait for the tower to switch."""
-        for name, value in (("pack", pack_nr), ("group", group_nr)):
+    @property
+    def served_place(self) -> tuple[int, int] | None:
+        """The (group_nr, pack_nr) the block reports right now."""
+        if (pack_id := self.pack_id) is None:
+            return None
+        return _place(pack_id)
+
+    async def async_select(self) -> None:
+        """Point the block at this pack and wait for the tower to switch."""
+        for name, value in (("pack", self.pack_nr), ("group", self.group_nr)):
             if not 0 <= value <= 15:
                 raise ValueError(f"battery {name} {value} is outside 0-15")
-        selection = group_nr << 8 | pack_nr
         # Some towers reject the write yet already serve the wanted pack.
-        if await self._async_serves(selection):
+        if await self._async_serves():
             return
-        await self._unit.write_register(_BMS_INQUIRE_REGISTER, selection)
-        if await self._async_serves(selection):
+        await self._unit.write_register(
+            _BMS_INQUIRE_REGISTER, self.group_nr << 8 | self.pack_nr
+        )
+        if await self._async_serves():
             return
         for _ in range(_SETTLE_STEPS):
             await sleep(_SETTLE_STEP)
-            if await self._async_serves(selection):
+            if await self._async_serves():
                 return
 
-    async def _async_serves(self, selection: int) -> bool:
-        """Whether the block reports the pack ``selection`` names."""
-        return (await self._unit.read_holding_registers(_PACK_ID_REGISTER, 1))[
-            0
-        ] & 0x0FFF == selection
+    async def _async_serves(self) -> bool:
+        """Whether the block reports this pack."""
+        [pack_id] = await self._unit.read_holding_registers(_PACK_ID_REGISTER, 1)
+        return _place(pack_id) == (self.group_nr, self.pack_nr)
+
+
+def _place(pack_id: int) -> tuple[int, int]:
+    """The (group_nr, pack_nr) a ``group<<8 | pack`` word names."""
+    return pack_id >> 8 & 0xF, pack_id & 0xFF

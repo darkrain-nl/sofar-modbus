@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
 
+from modbus_connection import (
+    IllegalDataAddressError,
+    IllegalDataValueError,
+    IllegalFunctionError,
+)
 from modbus_connection.model import Component, RegisterField, UpdateReport
 
 from .variants import InverterType
 
 __all__ = [
+    "REFUSALS",
     "CorrectedTotal",
     "SofarComponent",
     "SofarComponentBase",
@@ -17,6 +23,9 @@ __all__ = [
     "UpdateReport",
     "corrected_total",
 ]
+
+REFUSALS = (IllegalFunctionError, IllegalDataAddressError, IllegalDataValueError)
+"""The exceptions a Sofar inverter answers an unserved request with."""
 
 
 class SofarComponentBase(Component):

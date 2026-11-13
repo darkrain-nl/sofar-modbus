@@ -9,6 +9,8 @@ from datetime import datetime
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
+    IllegalDataValueError,
+    IllegalFunctionError,
     ModbusConnectionError,
     ModbusTimeoutError,
     ServerDeviceFailureError,
@@ -217,10 +219,14 @@ async def test_overlapping_polls_drop_an_absent_log_once(
     assert _log_reads(mock_modbus_unit) == 3
 
 
+@pytest.mark.parametrize(
+    "error",
+    [IllegalFunctionError(), IllegalDataAddressError(), IllegalDataValueError()],
+)
 async def test_setup_drops_a_refused_log_at_once(
-    ktlx: SofarInverter, mock_modbus_unit: MockModbusUnit
+    ktlx: SofarInverter, mock_modbus_unit: MockModbusUnit, error: Exception
 ) -> None:
-    mock_modbus_unit.fail_read(LOG, IllegalDataAddressError())
+    mock_modbus_unit.fail_read(LOG, error)
     await ktlx.async_ensure_setup()
     assert "fault_log" not in ktlx.readings_components
     assert not ktlx.has_fault_log

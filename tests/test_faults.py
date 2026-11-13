@@ -67,10 +67,10 @@ def test_every_fault_is_reachable_from_exactly_one_bit() -> None:
 
 def test_the_same_bit_in_two_registers_stays_distinct() -> None:
     # IntFlag members hash by value, so these two collide in any lookup that
-    # isn't keyed by register number first.
+    # isn't keyed by register first.
     assert len({Fault1.ID001_GRID_OVER_VOLTAGE, Fault11.ID161_FORCED_SHUTDOWN}) == 1
-    assert _REGISTER_FAULTS[1][1].key == "grid_over_voltage"
-    assert _REGISTER_FAULTS[11][1].key == "forced_shutdown"
+    assert _REGISTER_FAULTS[Fault1][1].key == "grid_over_voltage"
+    assert _REGISTER_FAULTS[Fault11][1].key == "forced_shutdown"
 
 
 async def test_active_faults_span_subsystems(

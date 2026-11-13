@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
+    IllegalDataValueError,
     IllegalFunctionError,
     ModbusConnectionError,
     ModbusTimeoutError,
@@ -132,6 +133,16 @@ async def test_component_names_are_empty_until_setup(
     assert "grid" in hybrid.readings_components
     assert "feed_in" in hybrid.settings_components
     assert not set(hybrid.readings_components) & set(hybrid.settings_components)
+
+
+def test_each_component_name_polls_its_own_attribute(
+    hybrid: SofarInverter,
+) -> None:
+    assert len(READING_COMPONENTS) == 18
+    assert len(SETTING_COMPONENTS) == 12
+    assert hybrid._components.keys() == {*READING_COMPONENTS, *SETTING_COMPONENTS}
+    for name, component in hybrid._components.items():
+        assert component is getattr(hybrid, name)
 
 
 async def test_expected_components_come_from_the_type_before_setup(
@@ -436,7 +447,8 @@ async def test_a_blank_clock_reads_as_no_value(
 ) -> None:
     """Month 0 is not a date; the property says so rather than raising."""
     mock_modbus_unit.holding[0x042D] = 0
-    await hybrid.async_update()
+    await hybrid.identity.async_update()
+    assert hybrid.identity.serial_number == HYBRID_SERIAL
     assert hybrid.identity.rtc is None
 
 
@@ -467,11 +479,14 @@ async def test_the_eps_probe_detects_presence(
     assert EPS in inverter.inverter_type
 
 
-@pytest.mark.parametrize("error", [IllegalDataAddressError(), IllegalFunctionError()])
+@pytest.mark.parametrize(
+    "error",
+    [IllegalFunctionError(), IllegalDataAddressError(), IllegalDataValueError()],
+)
 async def test_the_eps_probe_detects_absence(
     mock_modbus_unit: MockModbusUnit, error: Exception
 ) -> None:
-    """Either exception code means the off-grid block does not exist."""
+    """Any refusal means the off-grid block does not exist."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     mock_modbus_unit.fail_read(0x0504, error)
     inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)

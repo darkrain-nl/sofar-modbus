@@ -197,9 +197,7 @@ def _percentile(answered: list[float], fraction: float) -> float | None:
 SPACING_STEPS = (0.02, 0.03, 0.05, 0.1, 0.2)
 """Gaps to try between this unit's own frames, narrowest first.
 
-30 ms is what Home Assistant's YAML modbus integration has long given a
-serial line by default, and nothing at all to a TCP one, so the ladder
-steps through it rather than starting there.
+HA's YAML modbus spaces serial at 30 ms and TCP at 0; this spans both.
 """
 
 BUDGET = 1.0
@@ -261,7 +259,7 @@ class LinkTuner:
         # anything, so this trails the poll that is being judged.
         self._answered |= report.updated
 
-    def observe_failure(self, err: ModbusError) -> None:
+    def observe_failure(self) -> None:
         """Take in a poll that raised rather than reporting.
 
         It named no component, so only its reads and opens count.

@@ -60,12 +60,6 @@ def test_optional_feature_groups_are_independent() -> None:
 
 
 def test_bat_bts_belongs_to_no_group_so_it_filters_nothing() -> None:
-    """Faithful to upstream: ``matchInverterWithMask`` never tests BAT_BTS.
-
-    The bit is still set from the serial number, and the device object uses it
-    (``has_battery_tower``) — but as a mask it constrains nothing, so the battery
-    tower is kept out of a poll by the device rather than by matching.
-    """
     assert matches(HYBRID | X3 | BAT_BTS, BAT_BTS)
     assert matches(HYBRID | X3, BAT_BTS)
     assert matches(InverterType(0), BAT_BTS)

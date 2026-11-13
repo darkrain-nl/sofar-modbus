@@ -50,8 +50,7 @@ async def test_pv_string_reads_its_own_fields(
     string = hybrid.pv_string(number)
     await string.component.async_update()
     assert string.number == number
-    assert string.component is getattr(hybrid, string.component_name)
-    assert string.component_name == PV_STRING_COMPONENTS[number]
+    assert string.component is getattr(hybrid, PV_STRING_COMPONENTS[number])
     for measurement in _PV_FIELDS:
         flat = getattr(string.component, f"pv_{measurement}_{number}")
         assert flat is not None
@@ -66,8 +65,7 @@ async def test_battery_string_reads_its_own_fields(
     string = hybrid.battery_string(number)
     await string.component.async_update()
     assert string.number == number
-    assert string.component is getattr(hybrid, string.component_name)
-    assert string.component_name == BATTERY_STRING_COMPONENTS[number]
+    assert string.component is getattr(hybrid, BATTERY_STRING_COMPONENTS[number])
     for measurement in _BATTERY_FIELDS:
         flat = getattr(string.component, f"battery_{measurement}_{number}")
         assert flat is not None
@@ -157,12 +155,10 @@ async def test_write_remote_switch_typed(
 # mypy checks the rest; an unused ignore fails it under strict mode.
 def test_accessor_types(hybrid: SofarInverter) -> None:
     pv = hybrid.pv_string(1)
-    assert_type(pv.component_name, str)
     assert_type(pv.voltage, float | None)
     assert_type(pv.current, float | None)
     assert_type(pv.power, float | None)
     battery = hybrid.battery_string(1)
-    assert_type(battery.component_name, str)
     assert_type(battery.voltage, float | None)
     assert_type(battery.current, float | None)
     assert_type(battery.power, float | None)
