@@ -229,13 +229,17 @@ class BatteryTowerSilentError(SilentError):
 
 
 @contextlib.contextmanager
-def _silent_on_open_link(unit: ModbusUnit | TimedUnit) -> Iterator[None]:
-    """Raise a timeout as ``InverterSilentError`` while the link is open."""
-    # A gateway error stays in the report; only raise_when_silent lifts it.
+def _silent_on_open_link(
+    unit: ModbusUnit | TimedUnit, *, raise_when_silent: bool
+) -> Iterator[None]:
+    """Raise a silence as ``InverterSilentError`` while the link is open."""
     try:
         yield
-    except ModbusTimeoutError as err:
+    except _SILENCES as err:
         if not unit.connected:
+            raise
+        # Opt-in, so callers catching the raw gateway error keep it.
+        if not raise_when_silent and isinstance(err, GatewayTargetError):
             raise
         # Keep the text: callers that predate this error print it.
         raise InverterSilentError(*err.args) from err
@@ -378,7 +382,7 @@ class SofarInverter(Device):
         """Build an inverter for a caller that does not know its serial."""
         unit.require_timeout(timeout)
         identity = Identity(unit)
-        with _silent_on_open_link(unit):
+        with _silent_on_open_link(unit, raise_when_silent=False):
             await identity.async_update(notify=False)
         serial_number = identity.serial_number
         assert serial_number is not None
@@ -519,13 +523,13 @@ class SofarInverter(Device):
             if matches(self.inverter_type, getattr(self, name).applies_to)
         ]
 
-    async def async_ensure_setup(self) -> None:
+    async def async_ensure_setup(self, *, raise_when_silent: bool = False) -> None:
         """Run setup once, one caller at a time.
 
         Overlapping runs would edit each other's component lists.
         """
         async with self._setup_lock:
-            with _silent_on_open_link(self._link):
+            with _silent_on_open_link(self._link, raise_when_silent=raise_when_silent):
                 await super().async_ensure_setup()
 
     async def _async_setup(self) -> None:
@@ -805,12 +809,12 @@ class SofarInverter(Device):
         """
         report = UpdateReport()
         try:
-            await self.async_ensure_setup()
+            await self.async_ensure_setup(raise_when_silent=raise_when_silent)
             names = [
                 *(self._readings if readings else ()),
                 *(self._settings if settings else ()),
             ]
-            with _silent_on_open_link(self._link):
+            with _silent_on_open_link(self._link, raise_when_silent=raise_when_silent):
                 await self._async_read(names, report)
             first = dict(report.failed)
             if report.failed and report.updated:
@@ -912,7 +916,7 @@ class SofarInverter(Device):
 
         A failing pack clears its own ``answered``; the rest still read.
         """
-        await self.async_ensure_setup()
+        await self.async_ensure_setup(raise_when_silent=raise_when_silent)
         # A caller still polling packs learns why none came back.
         if not self.has_battery_tower:
             return UpdateReport(failed={BATTERY_PACKS: ModbusError("no battery tower")})

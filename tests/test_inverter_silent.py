@@ -79,6 +79,73 @@ async def test_a_timeout_during_setup_on_an_open_link_is_silence(
         await inverter.async_update_readings()
 
 
+SETUP_POLLS = [
+    SofarInverter.async_update_readings,
+    SofarInverter.async_update_settings,
+    SofarInverter.async_update,
+    SofarInverter.async_update_packs,
+]
+
+
+@pytest.mark.parametrize("poll", SETUP_POLLS)
+@pytest.mark.parametrize(
+    "serial_number",
+    [
+        pytest.param(HYBRID_SERIAL, id="pv_tier"),
+        pytest.param("NOPE000000001", id="detect_type"),
+    ],
+)
+async def test_a_gateway_during_setup_on_an_open_link_is_silence_when_asked(
+    mock_modbus_unit: MockModbusUnit,
+    poll: Callable[..., Awaitable[UpdateReport]],
+    serial_number: str,
+) -> None:
+    gateway = GatewayTargetError()
+    mock_modbus_unit.fail_requests(gateway)
+    inverter = SofarInverter(mock_modbus_unit, serial_number=serial_number)
+
+    with pytest.raises(InverterSilentError) as info:
+        await poll(inverter, raise_when_silent=True)
+
+    assert info.value.__cause__ is gateway
+
+
+async def test_a_gateway_rating_during_setup_is_silence_when_asked(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.fail_read(RATING_REGISTER, GatewayTargetError())
+    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
+
+    with pytest.raises(InverterSilentError):
+        await inverter.async_update_readings(raise_when_silent=True)
+
+
+@pytest.mark.parametrize("poll", SETUP_POLLS)
+async def test_a_gateway_during_setup_stays_raw_by_default(
+    mock_modbus_unit: MockModbusUnit,
+    poll: Callable[..., Awaitable[UpdateReport]],
+) -> None:
+    mock_modbus_unit.fail_requests(GatewayTargetError())
+    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
+
+    with pytest.raises(GatewayTargetError):
+        await poll(inverter)
+
+
+async def test_a_gateway_during_setup_on_a_closed_link_stays_raw(
+    mock_modbus_connection: MockModbusConnection,
+    mock_modbus_unit: MockModbusUnit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_modbus_unit.fail_requests(GatewayTargetError())
+    drop_link_on_read(monkeypatch, mock_modbus_connection, mock_modbus_unit)
+    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
+
+    with pytest.raises(GatewayTargetError):
+        await inverter.async_update_readings(raise_when_silent=True)
+
+
 async def test_a_timeout_that_closes_the_link_stays_a_plain_timeout(
     hybrid: SofarInverter,
     mock_modbus_connection: MockModbusConnection,
