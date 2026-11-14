@@ -22,9 +22,6 @@ from .device import (
 )
 from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
 from .enums import (
-    BatConfigCellType,
-    BatConfigProtocol,
-    BatConfigWriteStatus,
     BatteryConfigCellType,
     BatteryConfigProtocol,
     BatteryConfigWriteStatus,
@@ -57,7 +54,6 @@ from .enums import (
     Fault29,
     Fault30,
     FeedInLimitationMode,
-    FeedinLimitationMode,
     ParallelControlMode,
     ParallelRole,
     PassiveModeTimeoutAction,
@@ -108,9 +104,6 @@ __all__ = [
     "READING_COMPONENTS",
     "SETTING_COMPONENTS",
     "ActivePowerControl",
-    "BatConfigCellType",
-    "BatConfigProtocol",
-    "BatConfigWriteStatus",
     "BatteryActiveControl",
     "BatteryChargeCutoff",
     "BatteryConfig",
@@ -166,7 +159,6 @@ __all__ = [
     "FaultLogEntry",
     "FeedInLimit",
     "FeedInLimitationMode",
-    "FeedinLimitationMode",
     "GridOutput",
     "Identity",
     "InverterRating",
