@@ -17,10 +17,9 @@ from modbus_connection import (
 )
 from modbus_connection.mock import MockModbusUnit
 
-from sofar_modbus import SofarInverter
-from sofar_modbus.modern import FAULTS_BY_ID, FaultLogEntry
+from sofar_modbus import FAULTS_BY_ID, FaultLogEntry, SofarInverter
 
-from .conftest import MODERN_HOLDING, fail_then, yield_before_reads
+from .conftest import HOLDING, fail_then, yield_before_reads
 
 LOG = 0x1480
 
@@ -49,7 +48,7 @@ def _entry(fault_id: int, *when: int) -> FaultLogEntry:
 @pytest.fixture
 def ktlx(mock_modbus_unit: MockModbusUnit) -> SofarInverter:
     """A three-phase PV inverter whose log reads as the hardware's."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.holding[LOG] = KTLX_G3_LOG
     return SofarInverter(mock_modbus_unit, serial_number="SS2ES104N5S445")
 
@@ -92,7 +91,7 @@ async def test_an_empty_log_keeps_the_component(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """Unused slots read as zeros on the KTLX-G3; no faults yet is no reason."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     inverter = SofarInverter(mock_modbus_unit, serial_number="SS2ES104N5S445")
     await inverter.async_update()
     assert "fault_log" in inverter.readings_components
@@ -148,7 +147,7 @@ async def test_a_remembered_log_is_never_dropped(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """A log seen on an earlier run outlives a silent setup."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.fail_read(LOG, ModbusTimeoutError("busy"))
     inverter = SofarInverter(
         mock_modbus_unit, serial_number="SS2ES104N5S445", has_fault_log=True
@@ -162,7 +161,7 @@ async def test_a_remembered_log_is_never_dropped(
 async def test_a_remembered_log_skips_the_setup_probe(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     inverter = SofarInverter(
         mock_modbus_unit, serial_number="SS2ES104N5S445", has_fault_log=True
     )

@@ -8,8 +8,8 @@ from typing import ClassVar
 
 from modbus_connection.model import RegisterField, gauge
 
-from ..model import SofarComponent
-from ..variants import GEN, HYBRID, MPPT3, MPPT4, MPPT6, MPPT8, MPPT10, PV
+from .model import SofarComponent
+from .variants import GEN, HYBRID, MPPT3, MPPT4, MPPT6, MPPT8, MPPT10, PV
 
 
 @dataclass(frozen=True, slots=True)

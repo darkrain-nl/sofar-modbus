@@ -19,15 +19,10 @@ from modbus_connection.cli_helper import (
 from modbus_connection.model import Component
 
 from sofar_modbus import (
-    SofarComponentBase,
-    SofarInverter,
-    SofarLegacyInverter,
-    matches,
-)
-from sofar_modbus.modern import (
     BATTERY_PACKS,
     BatteryPack,
     BatteryTowerSilentError,
+    SofarInverter,
     async_detect_type,
 )
 from sofar_modbus.tuning import LinkStats, TimedUnit
@@ -40,16 +35,22 @@ MAX_COUNT = 125
 # The second poll starts at the pack the first left selected.
 PACK_SWEEPS = 2
 
-Inverter = SofarInverter | SofarLegacyInverter
 RegisterRead = tuple[int, int, list[int] | str]
+
+# An older inverter keeps its serial in the input registers.
+LEGACY_SERIAL = (0x2002, 6)
+# The holding blocks the earlier draft of the older map read.
+LEGACY_BLOCKS = [(0x0000, 33), (0x0200, 70), (0x0250, 6)]
 
 EXAMPLES = """examples:
   # a gateway answering Modbus TCP: pass no framing (502 is the default)
   uv run script/query.py 192.168.1.50 --port 502 --unit 1
   # a box forwarding the RTU frames over TCP
   uv run script/query.py socket://192.168.1.50:8899 --transport serial --unit 1
-  # a USB or serial adapter, on an older-generation inverter
-  uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
+  # a USB or serial adapter
+  uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1
+  # an older-generation inverter: its serial and raw blocks, for an issue
+  uv run script/query.py 192.168.1.50 --legacy
   # every register read, plus ranges the library does not model
   uv run script/query.py 192.168.1.50 --raw --registers 0x1480:40 --registers 0x2004
   # a hybrid with a BTS tower, every pack included, with the reasons
@@ -95,25 +96,15 @@ def _yes_no(flag: bool) -> str:
     return "yes" if flag else "no"
 
 
-def served_components(inverter: Inverter) -> list[tuple[str, Component]]:
+def served_components(inverter: SofarInverter) -> list[tuple[str, Component]]:
     """The components this inverter polls, plus the two setup reads."""
-    inverter_type = inverter.inverter_type
-    assert inverter_type is not None  # the update below set the inverter up
-    if isinstance(inverter, SofarInverter):
-        # The model decides these, so asking it beats deriving them.
-        names = (
-            "identity",
-            "rating",
-            *inverter.readings_components,
-            *inverter.settings_components,
-        )
-        return [(name, getattr(inverter, name)) for name in names]
-    return [
-        (name, component)
-        for name, component in vars(inverter).items()
-        if isinstance(component, SofarComponentBase)
-        and matches(inverter_type, component.applies_to)
-    ]
+    names = (
+        "identity",
+        "rating",
+        *inverter.readings_components,
+        *inverter.settings_components,
+    )
+    return [(name, getattr(inverter, name)) for name in names]
 
 
 async def _mask_type(unit: TimedUnit) -> str:
@@ -217,6 +208,21 @@ def _print_registers(reads: list[RegisterRead]) -> None:
             print(f"  0x{start + offset:04X}  0x{value:04X}  {value}")
 
 
+async def _query_legacy(unit: TimedUnit, ranges: list[tuple[int, int]]) -> int:
+    """Print an older inverter's serial and raw blocks, decoding nothing."""
+    try:
+        words = await unit.read_input_registers(*LEGACY_SERIAL)
+    except ModbusError as err:
+        print(f"Could not read the serial number: {_error(err)}")
+        print(f"{unit.reads} Modbus reads, {_timings(unit.stats)}")
+        return 1
+    serial = b"".join(word.to_bytes(2) for word in words).decode("ascii", "replace")
+    _line("Serial number", serial.strip("\x00 "))
+    _print_registers(await _read_registers(unit, [*LEGACY_BLOCKS, *ranges]))
+    print(f"\n{unit.reads} Modbus reads, {_timings(unit.stats)}")
+    return 0
+
+
 async def main() -> int:
     """Read one inverter and print it."""
     # Silence the backend's connect traceback; one line below says it.
@@ -230,12 +236,14 @@ async def main() -> int:
     add_connection_args(parser, connections=CONNECTIONS)
     parser.add_argument("--unit", type=int, default=1, help="Modbus unit id")
     parser.add_argument(
-        "--legacy", action="store_true", help="an older-generation inverter"
+        "--legacy",
+        action="store_true",
+        help="an older-generation inverter: print its serial and raw blocks only",
     )
     parser.add_argument(
         "--pm",
         action="store_true",
-        help="also read the parallel-system registers (current generation only)",
+        help="also read the parallel-system registers",
     )
     parser.add_argument(
         "--raw", action="store_true", help="also dump every register read, as JSON"
@@ -260,6 +268,8 @@ async def main() -> int:
         help="print the library's log, which says why each verdict was reached",
     )
     args = parser.parse_args()
+    if args.legacy and (args.pm or args.raw or args.packs):
+        parser.error("--legacy reads raw blocks only; drop --pm, --raw and --packs")
     if args.debug:
         library_log = logging.getLogger("sofar_modbus")
         library_log.setLevel(logging.DEBUG)
@@ -272,26 +282,20 @@ async def main() -> int:
         return 1
 
     timed = TimedUnit(connection.for_unit(args.unit))
-    masks: dict[int, int] = {}
-    mask_type = ""
+    if args.legacy:
+        try:
+            return await _query_legacy(timed, args.registers)
+        finally:
+            await connection.close()
     sweeps: list[str] = []
     try:
-        inverter: Inverter = (
-            await SofarLegacyInverter.async_detect(timed)
-            if args.legacy
-            else await SofarInverter.async_detect(timed, read_pm=args.pm)
-        )
+        inverter = await SofarInverter.async_detect(timed, read_pm=args.pm)
         report = await inverter.async_update()  # the first update sets the inverter up
         # Everything below reads again, so measure the poll alone.
         poll_reads, poll_stats = timed.reads, timed.stats
-        if isinstance(inverter, SofarInverter):
-            masks = await inverter.async_read_masks()
-            mask_type = await _mask_type(timed)
-        if (
-            args.packs
-            and isinstance(inverter, SofarInverter)
-            and inverter.has_battery_tower
-        ):
+        masks = await inverter.async_read_masks()
+        mask_type = await _mask_type(timed)
+        if args.packs and inverter.has_battery_tower:
             sweeps = await _sweep_packs(inverter, timed)
         registers = await _read_registers(timed, args.registers)
         raw = await inverter.async_read_raw() if args.raw else None
@@ -304,11 +308,9 @@ async def main() -> int:
         await connection.close()
 
     _line("Serial number", inverter.serial_number)
-    if isinstance(inverter, SofarInverter):
-        _line("Model", inverter.model)
+    _line("Model", inverter.model)
     _line("Type", inverter.inverter_type.name)
-    if isinstance(inverter, SofarInverter):
-        _print_verdicts(inverter, mask_type)
+    _print_verdicts(inverter, mask_type)
     for name, component in served_components(inverter):
         print()
         print_component(component, title=name)
@@ -317,10 +319,8 @@ async def main() -> int:
         for name, error in report.failed.items():
             print(f"  {name}: {_error(error)}")
     if sweeps:
-        assert isinstance(inverter, SofarInverter)  # only it has a tower
         _print_packs(inverter, sweeps)
-    if isinstance(inverter, SofarInverter):
-        _print_masks(masks)
+    _print_masks(masks)
     _print_registers(registers)
     if raw is not None:
         print("\nRaw registers")

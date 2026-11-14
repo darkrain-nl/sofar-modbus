@@ -11,11 +11,9 @@ from modbus_connection.mock import MockModbusUnit
 from modbus_connection.model import Component
 from syrupy.assertion import SnapshotAssertion
 
-from sofar_modbus import SofarInverter, SofarLegacyInverter
-from sofar_modbus.model import SofarLegacyComponent
-from sofar_modbus.modern.battery import BatteryString
-from sofar_modbus.modern.pv import PvString
-from sofar_modbus.variants import matches
+from sofar_modbus import SofarInverter
+from sofar_modbus.battery import BatteryString
+from sofar_modbus.pv import PvString
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -56,8 +54,8 @@ def battery_values(string: BatteryString) -> tuple[float | None, ...]:
     )
 
 
-def modern_components(inverter: SofarInverter) -> dict[str, Component]:
-    """Every component a modern inverter can poll, by its public name."""
+def polled_components(inverter: SofarInverter) -> dict[str, Component]:
+    """Every component an inverter can poll, by its public name."""
     return {
         "state": inverter.state,
         "grid": inverter.grid,
@@ -92,7 +90,7 @@ def modern_components(inverter: SofarInverter) -> dict[str, Component]:
     }
 
 
-async def modern_snapshot(
+async def inverter_snapshot(
     inverter: SofarInverter, unit: MockModbusUnit, pv_strings: range
 ) -> dict[str, Any]:
     """Run every read step, recording what each one sent."""
@@ -103,7 +101,7 @@ async def modern_snapshot(
     await inverter.async_read_identity()
     identity_reads = take_reads(unit)
     await inverter.async_update_packs()
-    components = modern_components(inverter)
+    components = polled_components(inverter)
     return {
         "model": inverter.model,
         "type": inverter.inverter_type,
@@ -147,7 +145,7 @@ async def test_hybrid(
     snapshot: SnapshotAssertion,
 ) -> None:
     """A seeded three-phase hybrid with a three-group BTS tower."""
-    assert await modern_snapshot(hybrid, mock_modbus_unit, range(1, 3)) == snapshot
+    assert await inverter_snapshot(hybrid, mock_modbus_unit, range(1, 3)) == snapshot
 
 
 @pytest.mark.parametrize(
@@ -169,47 +167,4 @@ async def test_replayed_capture(
         ]
     inverter = await SofarInverter.async_detect(mock_modbus_unit)
     mock_modbus_unit.read_events.clear()
-    assert await modern_snapshot(inverter, mock_modbus_unit, pv_strings) == snapshot
-
-
-def legacy_components(
-    inverter: SofarLegacyInverter,
-) -> dict[str, SofarLegacyComponent]:
-    """Every member a legacy inverter can poll, by its public name."""
-    return {
-        "pv_common": inverter.pv_common,
-        "pv_single_phase": inverter.pv_single_phase,
-        "pv_three_phase": inverter.pv_three_phase,
-        "storage": inverter.storage,
-        "storage_three_phase": inverter.storage_three_phase,
-        "storage_eps": inverter.storage_eps,
-        "hybrid_pv_1": inverter.hybrid_pv_1,
-        "hybrid_pv_2": inverter.hybrid_pv_2,
-        "battery_settings": inverter.battery_settings,
-    }
-
-
-@pytest.mark.parametrize("fixture", ["legacy_hybrid", "legacy_three_phase_pv"])
-async def test_legacy(
-    request: pytest.FixtureRequest,
-    mock_modbus_unit: MockModbusUnit,
-    snapshot: SnapshotAssertion,
-    fixture: str,
-) -> None:
-    """A seeded legacy inverter of each map."""
-    inverter: SofarLegacyInverter = request.getfixturevalue(fixture)
-    await inverter.async_update()
-    setup_reads = take_reads(mock_modbus_unit)
-    await inverter.async_update()
-    assert {
-        "type": inverter.inverter_type,
-        "setup reads": setup_reads,
-        "poll reads": take_reads(mock_modbus_unit),
-        "members": {
-            name: decoded(component)
-            for name, component in legacy_components(inverter).items()
-            if matches(inverter.inverter_type, component.applies_to)
-        },
-        "identity": decoded(inverter.identity),
-        "pv power total": inverter.pv_power_total,
-    } == snapshot
+    assert await inverter_snapshot(inverter, mock_modbus_unit, pv_strings) == snapshot

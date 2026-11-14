@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from modbus_connection.model import gauge
 
-from ..model import SofarComponent
+from .model import SofarComponent
 
 
 class InverterRating(SofarComponent):

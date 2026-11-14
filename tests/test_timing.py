@@ -1,4 +1,4 @@
-"""What the device objects ask the link for, and what they measure of it."""
+"""What the inverter asks the link for, and what it measures of it."""
 
 from __future__ import annotations
 
@@ -18,49 +18,41 @@ from modbus_connection import (
 from modbus_connection.mock import MockModbusUnit
 from modbus_connection.model import UpdateReport
 
-from sofar_modbus import SofarInverter, SofarLegacyInverter
-from sofar_modbus.tuning import (
+from sofar_modbus import SofarInverter
+from sofar_modbus._tuner import (
     CONNECT_DELAYS,
     CROWDED_POLLS,
     FAILED_OPENS,
     QUIET_POLLS,
     SPACING_STEPS,
     LinkTuner,
-    LinkTuning,
-    TimedUnit,
 )
+from sofar_modbus.tuning import LinkTuning, TimedUnit
 
-from .conftest import HYBRID_SERIAL, MODERN_HOLDING, fail_then
-
-Inverter = type[SofarInverter] | type[SofarLegacyInverter]
-
-INVERTERS = (SofarInverter, SofarLegacyInverter)
+from .conftest import HOLDING, HYBRID_SERIAL, fail_then
 
 
-@pytest.mark.parametrize("inverter_class", INVERTERS)
 def test_an_inverter_requires_nothing_of_the_link_by_itself(
-    inverter_class: Inverter, mock_modbus_unit: MockModbusUnit
+    mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """Guessing a timeout for an unmeasured link is what this avoids."""
-    inverter_class(mock_modbus_unit, serial_number=HYBRID_SERIAL)
+    SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
     assert mock_modbus_unit.required_timeout is None
 
 
-@pytest.mark.parametrize("inverter_class", INVERTERS)
 def test_a_caller_that_knows_its_link_states_the_timeout(
-    inverter_class: Inverter, mock_modbus_unit: MockModbusUnit
+    mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    inverter_class(mock_modbus_unit, serial_number=HYBRID_SERIAL, timeout=2.5)
+    SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL, timeout=2.5)
     assert mock_modbus_unit.required_timeout == 2.5
 
 
-@pytest.mark.parametrize("inverter_class", INVERTERS)
 async def test_detection_states_the_timeout_before_it_reads(
-    inverter_class: Inverter, mock_modbus_unit: MockModbusUnit
+    mock_modbus_unit: MockModbusUnit,
 ) -> None:
     mock_modbus_unit.fail_requests(ModbusTimeoutError("asleep"))
     with pytest.raises(ModbusTimeoutError):
-        await inverter_class.async_detect(mock_modbus_unit, timeout=2.5)
+        await SofarInverter.async_detect(mock_modbus_unit, timeout=2.5)
     assert mock_modbus_unit.required_timeout == 2.5
 
 
@@ -123,7 +115,7 @@ async def test_the_window_keeps_only_the_last_requests(
 async def test_an_inverter_times_its_own_requests(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     inverter = SofarInverter(
         mock_modbus_unit, serial_number=HYBRID_SERIAL, read_pm=True
     )
@@ -138,7 +130,7 @@ async def test_an_inverter_times_its_own_requests(
 async def test_an_inverter_reports_whether_its_link_is_open(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
     await inverter.async_update()
     assert inverter.connected
@@ -172,7 +164,7 @@ def _timed_out() -> UpdateReport:
 @pytest.fixture
 def tuned(mock_modbus_unit: MockModbusUnit) -> tuple[SofarInverter, LinkTuner]:
     """An inverter and the tuner its own polls report to."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     inverter = SofarInverter(
         mock_modbus_unit, serial_number=HYBRID_SERIAL, read_pm=True
     )
@@ -317,7 +309,7 @@ async def test_the_budget_caps_how_wide_a_poll_may_get(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """Thirty reads at fifty milliseconds would cost more than the budget."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     timed = TimedUnit(mock_modbus_unit)
     inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=1.0)
@@ -336,7 +328,7 @@ async def test_a_wider_budget_lets_the_ladder_climb(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """The same three desyncs, with room to answer them."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     timed = TimedUnit(mock_modbus_unit)
     inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=10.0)
@@ -439,17 +431,6 @@ async def test_one_bad_open_among_good_ones_is_not_a_pattern(
     assert tuner.tuning.connect_delay == 0.0
 
 
-async def test_what_a_run_settled_on_comes_back(
-    mock_modbus_unit: MockModbusUnit,
-) -> None:
-    timed = TimedUnit(mock_modbus_unit)
-    settled = LinkTuning(spacing=0.05, connect_delay=0.5)
-    LinkTuner(timed).restore(settled)
-
-    assert mock_modbus_unit.message_spacing == 0.05
-    assert mock_modbus_unit.required_connect_delay == 0.5
-
-
 async def test_a_raised_poll_still_feeds_the_connect_delay_ladder(
     tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
 ) -> None:
@@ -486,7 +467,7 @@ async def test_a_raised_poll_is_not_a_quiet_one(
 
 
 def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
-    return [r.getMessage() for r in caplog.records if r.name == "sofar_modbus.tuning"]
+    return [r.getMessage() for r in caplog.records if r.name == "sofar_modbus._tuner"]
 
 
 @pytest.mark.parametrize(
@@ -530,7 +511,7 @@ async def test_a_gap_the_budget_caps_is_logged(
     mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A line that stays crowded at the cap is worth seeing in a log."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     timed = TimedUnit(mock_modbus_unit)
     inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=1.0)
@@ -579,7 +560,8 @@ async def test_the_longest_connect_delay_is_logged_as_kept(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     inverter, tuner = tuned
-    tuner.restore(LinkTuning(connect_delay=CONNECT_DELAYS[-1]))
+    for _ in CONNECT_DELAYS:
+        await _fail_opens(inverter, tuner, mock_modbus_unit)
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
     await _fail_opens(inverter, tuner, mock_modbus_unit)
 
@@ -587,13 +569,3 @@ async def test_the_longest_connect_delay_is_logged_as_kept(
         "Not lengthening the 2.0 s connect delay (2 unanswered opens): "
         "it is the longest"
     ]
-
-
-def test_a_restore_is_logged(
-    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
-) -> None:
-    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
-    settled = LinkTuning(spacing=0.05, connect_delay=0.5)
-    LinkTuner(TimedUnit(mock_modbus_unit)).restore(settled)
-
-    assert _logged(caplog) == ["Restoring LinkTuning(spacing=0.05, connect_delay=0.5)"]

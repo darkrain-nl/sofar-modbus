@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from modbus_connection.model import gauge
 
-from ..model import SofarComponent
-from ..variants import EPS, HYBRID, X1, X3
+from .model import SofarComponent
+from .variants import EPS, HYBRID, X1, X3
 
 
 class OffGridTotals(SofarComponent):

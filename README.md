@@ -10,24 +10,26 @@ attributes. It owns no connection and no I/O policy — the caller does.
 
 ## Supported devices
 
-Sofar ships two quite different register maps, so there are two device objects.
+**`SofarInverter`** reads the current generation of Sofar inverters: HYD
+hybrids and KTL-X / KTLM PV inverters, over the 0x0400 (state and identity),
+0x0480 (grid), 0x0500 (off-grid), 0x0580 (PV), 0x0600 (battery), 0x0680
+(energy), 0x1000 (settings) and 0x9000 (BTS battery tower) blocks. Serial
+prefixes: `SP1`, `SP2`, `ZP1`, `ZP2`, `SM2E`, `ZM2E`, `SH3E`, `SS2E`, `ZS2E`,
+`SQ1ES1`, `SA1`, `SB1`, `SC1`, `SD1`, `SF4`, `SH1`, `SL1`, `SJ2`, `SS1`.
+Includes the Azzurro and ZCS rebadges.
 
-**`SofarInverter` — the current generation.** HYD hybrids and KTL-X / KTLM PV
-inverters, over the 0x0400 (state and identity), 0x0480 (grid), 0x0500
-(off-grid), 0x0580 (PV), 0x0600 (battery), 0x0680 (energy), 0x1000 (settings)
-and 0x9000 (BTS battery tower) blocks. Serial prefixes: `SP1`, `SP2`, `ZP1`,
-`ZP2`, `SM2E`, `ZM2E`, `SH3E`, `SS2E`, `ZS2E`, `SQ1ES1`, `SA1`, `SB1`, `SC1`,
-`SD1`, `SF4`, `SH1`, `SL1`, `SJ2`, `SS1`. Includes the Azzurro and ZCS
-rebadges. This is the only generation with writable registers.
+**Have an older-generation inverter?** Those use a different register map
+(the 0x0000 and 0x0200 blocks), and support for them needs someone who can test
+on the real thing. If you own one and would like to help bring it back, please
+[open an issue](https://github.com/darkrain-nl/sofar-modbus/issues) with the
+output of `uv run script/query.py <address> --legacy` (see [Checking a real
+inverter](#checking-a-real-inverter)). It reads just the serial number and the
+raw register blocks, which is enough to get started, and an earlier draft of the
+map in the git history gives a head start.
 
-**`SofarLegacyInverter` — the older generation.** The earlier PV inverters
-(`SA1`, `SA3`, `SB1`, `ZA3`, `SC1`, `SD1`, `SF4`, `SH1`, `SJ2`, `SL1`, `SM1`)
-and the `SE1E` / `SM1E` / `ZE1E` / `ZM1E` storage inverters, over the 0x0000 and
-0x0200 blocks, with the serial number in the input-register space. Read-only.
-
-Within a generation, what an inverter serves depends on its model: single or
-three phase, PV-only or hybrid, how many MPPT trackers, whether off-grid (EPS)
-and parallel-system registers exist. `async_detect()` reads the serial number
+What an inverter serves depends on its model: single or three phase, PV-only
+or hybrid, how many MPPT trackers, whether off-grid (EPS) and parallel-system
+registers exist. `async_detect()` reads the serial number
 and settles this into an `InverterType` bitmask; each component declares the
 mask it applies to, and a poll reads only the matching ones. Nothing else is
 touched: an inverter without batteries never sees a battery register. A caller
@@ -79,10 +81,6 @@ asyncio.run(main())
 
 A poll reads each sub-system independently, the way the integration reads its
 blocks: one slow or refused block does not take the rest of the poll with it.
-The exception is a run of registers several sub-systems tile — the older
-generation's storage block and its three-phase PV block — where a read of one
-already spans the others, so they are pooled into that single request and
-reported under one name (`storage_block`, `pv_block`).
 Every update method returns an `UpdateReport` — a failed component keeps its
 previous values, does not notify its listeners, and is listed by attribute
 name with its error, while every other component refreshes and notifies once
@@ -112,7 +110,7 @@ different registers. Several bits are set at once, so no single one of them is
 `state.active_faults` decodes the lot into the subsystem each bit belongs to:
 
 ```python
-from sofar_modbus.modern import FaultCategory
+from sofar_modbus import FaultCategory
 
 faults = inverter.state.active_faults
 for fault in faults:
@@ -150,7 +148,7 @@ PV and battery strings are also reachable by number, as typed views that read
 through whichever component polls them:
 
 ```python
-from sofar_modbus.modern import PV_STRING_COMPONENTS
+from sofar_modbus import PV_STRING_COMPONENTS
 
 for number, component in PV_STRING_COMPONENTS.items():
     if component in inverter.readings_components:
@@ -217,16 +215,12 @@ three tries against a blip, then a warning instead of an error. After that,
 each poll that gets an answer tries once more until it reads. An inverter from
 `async_detect()` already has it.
 
-`SofarLegacyInverter` has no writable settings, so it refreshes all of its
-served components in one pass through `async_update()`, and does not offer the
-two split update methods.
-
 Writing works the same way: a typed method per setting, which also covers the
 registers the device insists on receiving as a block. `write()` by field name
 still reaches any writable field.
 
 ```python
-from sofar_modbus.modern import ChargerUseMode, FeedinLimitationMode
+from sofar_modbus import ChargerUseMode, FeedinLimitationMode
 
 await inverter.charger.async_write_mode(ChargerUseMode.PASSIVE_MODE)
 await inverter.feed_in.async_write_limit(FeedinLimitationMode.DISABLED, 3000)
@@ -269,7 +263,7 @@ A BTS battery tower multiplexes every pack onto one register block, so packs are
 read one at a time, by their own call rather than by either poll:
 
 ```python
-from sofar_modbus.modern import BATTERY_PACKS
+from sofar_modbus import BATTERY_PACKS
 
 report = await inverter.async_update_packs()
 for (group_nr, pack_nr), pack in inverter.battery_packs.items():
@@ -319,7 +313,7 @@ say which. `redact_serial=True` leaves the serial number's registers out, for a
 dump that will be posted publicly.
 
 `async_read_masks()` is the other half of an issue report. Every 64-address
-block of this generation opens with a four-register mask naming which of its
+block of the register map opens with a four-register mask naming which of its
 registers the model actually serves, and this returns one per block, keyed by
 the block's base address; bit *n* of a mask is `base + n`. It is worth having
 because an inverter answers a register it does not serve rather than refusing
@@ -364,8 +358,10 @@ correctly, and detected as the model you expect:
 uv run script/query.py 192.168.1.50 --port 502 --unit 1
 # a box forwarding the RTU frames over TCP
 uv run script/query.py socket://192.168.1.50:8899 --transport serial --unit 1
-# a USB or serial adapter, on an older-generation inverter
-uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1 --legacy
+# a USB or serial adapter
+uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1
+# an older-generation inverter: its serial and raw blocks, for an issue
+uv run script/query.py 192.168.1.50 --legacy
 # every register read, plus ranges the library does not model
 uv run script/query.py 192.168.1.50 --raw --registers 0x1480:40 --registers 0x2004
 # a hybrid with a BTS tower, every pack included, with the reasons
@@ -377,23 +373,23 @@ line, as [Naming the link](#naming-the-link) explains. With a gateway answering
 Modbus TCP, leave the framing out: `--framer rtu` there times out on every
 register, which looks exactly like an inverter asleep.
 
-The two generations share serial prefixes, so the script does not guess which
-one it is talking to: pass `--legacy` for an older inverter. It prints the read
-count as well, so a poll's request budget is visible against real hardware
-rather than only in the tests. It follows the count with how long those reads
+The script prints the read count as well, so a poll's request budget is
+visible against real hardware rather than only in the tests. It follows the count with how long those reads
 took, median, p95 and slowest, which is what to judge a timeout against.
-`--raw` adds every register it read, undecoded, which is what an issue about a
-wrong value should quote.
+`--raw` adds every register it read, undecoded, which is the most helpful thing
+to include in an issue about a wrong value.
 
-For a current-generation inverter it also prints the address masks and the type
-they declare on their own, next to the type from the serial. A mismatch there,
-such as the masks declaring a PV string the serial's profile lacks, is the
-first thing to look for when entities are missing. The lines after it are the
-library's own verdicts (unrecognized, battery tower, wired battery strings,
-clock and IV-curve support), which decide what Home Assistant creates.
-`--registers ADDR[:COUNT]` reads any holding range raw, up to 125 registers
-per range, for checking a register the library does not model yet. All of
-these reads come after the poll, so they do not count towards its timings.
+It also prints the address masks and the type they declare on their own, next
+to the type from the serial. A mismatch there, such as the masks declaring a PV
+string the serial's profile lacks, is the first thing to look for when entities
+are missing. The lines after it are the library's own verdicts (unrecognized,
+battery tower, wired battery strings, clock and IV-curve support), which decide
+what Home Assistant creates. `--registers ADDR[:COUNT]` reads any holding range
+raw, up to 125 registers per range, for checking a register the library does
+not model yet. All of these reads come after the poll, so they do not count
+towards its timings. `--legacy` skips all of that for an older-generation
+inverter: it prints the serial number from input register 0x2002 and the raw
+0x0000, 0x0200 and 0x0250 blocks, plus any `--registers` ranges.
 `--packs` runs the pack poll twice, the way Home Assistant does every five
 minutes, and prints each poll's outcome, reads and time, then the tower's
 layout and every pack. The second poll starts at the pack the first left
@@ -430,17 +426,17 @@ every register block that goes unanswered. Setup spends it deliberately: probing
 for off-grid registers, or for a battery tower that is not there, means waiting
 one out. An inverter itself is quick, and a 48-register block came back in a
 median 243 ms on a 4.4 KTLX-G3 over TCP, but what sits between it and you varies
-far more than the inverter does, so neither device object guesses a value. The
+far more than the inverter does, so `SofarInverter` does not guess a value. The
 connection's own default, 10 seconds, applies.
 
 Measure before choosing one. `SofarInverter` times every request it makes, and
 `inverter.link_stats` holds the latency and failures of the last 200 of them;
-`inverter.connected` says whether the link is open. For the older generation,
-`sofar_modbus.tuning.TimedUnit` wraps a `ModbusUnit` to the same effect, which
-is where `query.py`'s numbers come from: hand the wrapper to the inverter
-instead of the unit and read its `stats`.
+`inverter.connected` says whether the link is open. `query.py` takes its
+numbers from `sofar_modbus.tuning.TimedUnit`, which wraps a `ModbusUnit` to the
+same effect: hand the wrapper to the inverter instead of the unit and read its
+`stats`.
 
-A caller who has measured their link states it with `timeout=` on either
+A caller who has measured their link states it with `timeout=` on the
 constructor or on `async_detect()`, which asks for it through
 `ModbusUnit.require_timeout()`. Two things to know before setting one: the
 connection runs with the largest value any of its units asks for, so a device
@@ -454,25 +450,6 @@ for the caller to do. A poll that gives up and raises, because the link is down
 or nothing answered, counts too: its reads towards the gap's budget, and its
 opening requests towards the pause after connecting.
 
-The older generation has no tuner of its own. `LinkTuner` does the same for
-it: give it the wrapper the inverter reads through, and hand it each poll's
-outcome:
-
-```python
-from sofar_modbus.tuning import LinkTuner, TimedUnit
-
-timed = TimedUnit(connection.for_unit(1))
-inverter = await SofarLegacyInverter.async_detect(timed)
-tuner = LinkTuner(timed)
-
-while True:
-    try:
-        tuner.observe(await inverter.async_update())
-    except ModbusError as err:
-        tuner.observe_failure(err)
-        raise
-```
-
 It tunes two things. The timeout is not one of them: the connection runs with
 the largest timeout any of its units asks for, and a unit that asks for nothing
 does not count, so a lower one would also hold every device sharing the link
@@ -483,8 +460,8 @@ says so by answering the wrong exchange (`ModbusDesyncError`), by reporting
 itself busy, or by going quiet on a component that was answering a moment ago.
 A desync widens the gap at once, the other two after three polls, up to 200 ms.
 Twenty quiet polls give a step back, and each widening doubles the patience
-before that is tried again. A `budget=` caps the whole thing: the gap is never
-wider than that many seconds spread over the reads one poll makes, so a poll
+before that is tried again. A one-second budget caps the whole thing: the gap
+is never wider than a second spread over the reads one poll makes, so a poll
 cannot outgrow its interval. Registers a model has never served are exempt,
 since chasing an absent block would widen the gap forever.
 
@@ -493,18 +470,8 @@ moment the socket is. Two opening requests that go unanswered earn a quarter
 second, then half, then one, then two. This one is never given back: it costs a
 single wait per connect, and a device that needed it still does.
 
-`inverter.link_tuning` (or `tuner.tuning`) is what it asks of the link, which
-is worth putting in a diagnostics download. A standalone tuner can also be
-stored and restored:
-
-```python
-tuner.restore(saved)  # before the first poll
-...
-save(tuner.tuning)  # whenever it changes
-```
-
-Restoring brings back the patience that came with a wider gap, so a crowded
-line is not narrowed again straight after every restart.
+`inverter.link_tuning` is what it asks of the link, which is worth putting in
+a diagnostics download.
 
 The gap is per unit, so it paces this inverter's own frames and no one else's.
 A line shared with another device cannot be quieted from here, only from

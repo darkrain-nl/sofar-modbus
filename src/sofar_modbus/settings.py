@@ -8,8 +8,6 @@ from __future__ import annotations
 from modbus_connection.encode import encode_int
 from modbus_connection.model import boolean, enum, flags, gauge, int32, integer
 
-from ..model import SofarComponent
-from ..variants import EPS, HYBRID, PM, PV, X3
 from .enums import (
     BatConfigCellType,
     BatConfigProtocol,
@@ -22,6 +20,8 @@ from .enums import (
     RemoteSwitchOnOff,
     SyncRtcResult,
 )
+from .model import SofarComponent
+from .variants import EPS, HYBRID, PM, PV, X3
 
 
 def _parallel_address(value: int) -> int:

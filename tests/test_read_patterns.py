@@ -7,9 +7,7 @@ from collections.abc import Iterable
 import pytest
 from modbus_connection.mock import MockModbusUnit, ReadEvent
 
-from sofar_modbus import SofarInverter, SofarLegacyInverter
-from sofar_modbus.model import SofarLegacyComponent
-from sofar_modbus.modern import (
+from sofar_modbus import (
     BatteryStrings1To2,
     BatteryStrings3To8,
     PvString3,
@@ -18,13 +16,12 @@ from sofar_modbus.modern import (
     PvStrings5To6,
     PvStrings7To8,
     PvStrings9To10,
+    SofarInverter,
 )
-from sofar_modbus.variants import AC, X1, matches
 
-from .conftest import LEGACY_HOLDING, LEGACY_THREE_PHASE_PV_SERIAL, MODERN_HOLDING
+from .conftest import HOLDING
 
-MODERN_BLOCK_SIZE = 48
-LEGACY_BLOCK_SIZE = 100
+BLOCK_SIZE = 48
 
 
 def covered(blocks: Iterable[ReadEvent], space: str = "holding") -> set[int]:
@@ -45,28 +42,6 @@ def field_addresses(component: object) -> set[int]:
         for field in part.resolved_fields.values()
         for offset in range(field.count)
     }
-
-
-def legacy_served(
-    inverter: SofarLegacyInverter,
-) -> list[tuple[str, SofarLegacyComponent]]:
-    """Every component this inverter polls, by name, pools as members."""
-    served = []
-    for name in (
-        "pv_common",
-        "pv_single_phase",
-        "pv_three_phase",
-        "storage",
-        "storage_three_phase",
-        "storage_eps",
-        "hybrid_pv_1",
-        "hybrid_pv_2",
-        "battery_settings",
-    ):
-        component: SofarLegacyComponent = getattr(inverter, name)
-        if matches(inverter.inverter_type, component.applies_to):
-            served.append((name, component))
-    return served
 
 
 async def poll(inverter: SofarInverter, unit: MockModbusUnit) -> list[ReadEvent]:
@@ -136,8 +111,8 @@ async def test_no_block_exceeds_the_devices_block_size(
 ) -> None:
     blocks = await poll(hybrid, mock_modbus_unit)
     assert blocks  # the poll did something
-    assert max(block.count for block in blocks) == MODERN_BLOCK_SIZE
-    assert all(block.count <= MODERN_BLOCK_SIZE for block in blocks)
+    assert max(block.count for block in blocks) == BLOCK_SIZE
+    assert all(block.count <= BLOCK_SIZE for block in blocks)
     assert all(block.register_type == "holding" for block in blocks)
 
 
@@ -166,7 +141,7 @@ async def test_the_battery_config_blocks_stay_apart(
 async def test_a_pv_only_inverter_never_touches_the_battery_registers(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     inverter = SofarInverter(mock_modbus_unit, serial_number="SH3E000001")
     blocks = await poll(inverter, mock_modbus_unit)
     read = covered(blocks)
@@ -181,7 +156,7 @@ async def test_a_pv_only_inverter_never_touches_the_battery_registers(
 async def test_the_extra_mppt_strings_are_only_read_where_they_exist(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     ten = SofarInverter(mock_modbus_unit, serial_number="SQ1ES1000001")
     ten_blocks = await poll(ten, mock_modbus_unit)
     assert covered(ten_blocks) >= set(range(0x0584, 0x05A2))
@@ -215,7 +190,7 @@ async def test_pv_string_6_power_reads_its_own_register(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """Upstream aliases string 6's power onto its current; the spec does not."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.holding[0x0594] = 250  # PV current 6 -> 2.5 A
     mock_modbus_unit.holding[0x0595] = 810  # PV power 6 -> 8.1 kW
     inverter = SofarInverter(mock_modbus_unit, serial_number="SQ1ES1000001")
@@ -223,76 +198,6 @@ async def test_pv_string_6_power_reads_its_own_register(
     assert 0x0595 in covered(blocks)
     assert inverter.pv_5_6.pv_current_6 == pytest.approx(2.5)
     assert inverter.pv_5_6.pv_power_6 == pytest.approx(8.1)
-
-
-# --- the older generation ---------------------------------------------
-
-
-async def test_legacy_storage_reads_one_block_plus_the_pv_strings(
-    legacy_hybrid: SofarLegacyInverter, mock_modbus_unit: MockModbusUnit
-) -> None:
-    """0x0250 strings are separate blocks; upstream marks both newblock."""
-    await legacy_hybrid.async_update()
-    mock_modbus_unit.read_events.clear()
-    await legacy_hybrid.async_update()
-    blocks = [
-        (b.register_type, b.address, b.count) for b in mock_modbus_unit.read_events
-    ]
-    assert blocks == [
-        # Storage and its EPS output pool: EPS's 0x0216/0x0217 sit inside the
-        # storage block, so a separate read of them fetched nothing new and
-        # protected nothing: storage's own bridge already spans them.
-        ("holding", 0x0200, 70),  # the whole storage block, EPS included
-        ("holding", 0x0250, 3),
-        ("holding", 0x0253, 3),
-    ]
-    assert all(count <= LEGACY_BLOCK_SIZE for _, _, count in blocks)
-
-
-async def test_legacy_three_phase_pv_reads_only_the_0x0000_block(
-    legacy_three_phase_pv: SofarLegacyInverter, mock_modbus_unit: MockModbusUnit
-) -> None:
-    await legacy_three_phase_pv.async_update()
-    mock_modbus_unit.read_events.clear()
-    await legacy_three_phase_pv.async_update()
-    blocks = [
-        (b.register_type, b.address, b.count) for b in mock_modbus_unit.read_events
-    ]
-    # PvCommon's temps fall inside ThreePhasePv's span; blocks pool to one.
-    assert blocks == [
-        ("holding", 0x0000, 33),
-    ]
-
-
-async def test_a_legacy_ac_inverter_polls_its_battery_floor(
-    mock_modbus_unit: MockModbusUnit,
-) -> None:
-    """An AC-coupled inverter includes the battery floor setting in its poll."""
-    mock_modbus_unit.holding.update(LEGACY_HOLDING)
-    mock_modbus_unit.input[0x104D] = 20
-    inverter = SofarLegacyInverter(
-        mock_modbus_unit,
-        serial_number=LEGACY_THREE_PHASE_PV_SERIAL,
-        inverter_type=AC | X1,
-    )
-
-    report = await inverter.async_update()
-
-    assert "battery_settings" in report.updated
-    assert inverter.battery_settings.battery_minimum_capacity == 20
-
-
-async def test_legacy_poll_reads_every_field_of_every_polled_component(
-    legacy_hybrid: SofarLegacyInverter, mock_modbus_unit: MockModbusUnit
-) -> None:
-    mock_modbus_unit.holding.update(LEGACY_HOLDING)
-    await legacy_hybrid.async_update()
-    for name, component in legacy_served(legacy_hybrid):
-        space = "input" if component.register_space == "input" else "holding"
-        missing = field_addresses(component) - covered(
-            mock_modbus_unit.read_events, space
-        )
-        assert not missing, f"{name} missed {sorted(missing)}"
 
 
 async def test_raw_dump_covers_every_polled_component(hybrid: SofarInverter) -> None:
@@ -319,18 +224,6 @@ async def test_a_raw_dump_can_leave_the_serial_number_out(
     assert {0x044C, 0x044D} <= set(holding)
 
 
-async def test_legacy_raw_dump_covers_every_polled_component(
-    legacy_hybrid: SofarLegacyInverter,
-) -> None:
-    await legacy_hybrid.async_update()
-
-    raw = await legacy_hybrid.async_read_raw()
-    assert 0x2002 in raw["input"]  # the serial number no poll reads
-    for name, component in legacy_served(legacy_hybrid):
-        missing = field_addresses(component) - set(raw[component.register_space])
-        assert not missing, f"{name} missed {sorted(missing)}"
-
-
 async def test_a_raw_dump_does_not_fire_listeners(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
@@ -345,33 +238,3 @@ async def test_a_raw_dump_does_not_fire_listeners(
 
     assert fired == []
     assert hybrid.grid.active_power_output_total == 20.0  # but the values are fresh
-
-
-async def test_a_legacy_raw_dump_does_not_fire_listeners(
-    legacy_hybrid: SofarLegacyInverter, mock_modbus_unit: MockModbusUnit
-) -> None:
-    await legacy_hybrid.async_update()
-    fired: list[str] = []
-    legacy_hybrid.storage.add_update_listener(lambda: fired.append("storage"))
-    legacy_hybrid.storage_eps.add_update_listener(lambda: fired.append("eps"))
-
-    mock_modbus_unit.holding[0x0216] = 2400
-    await legacy_hybrid.async_read_raw()
-
-    assert fired == []
-    assert legacy_hybrid.storage_eps.eps_voltage == 240.0
-
-
-async def test_a_pooled_read_still_notifies_each_member(
-    legacy_hybrid: SofarLegacyInverter,
-) -> None:
-    """Pooling changes the request count, not who hears about the result."""
-    await legacy_hybrid.async_update()
-    fired: list[str] = []
-    legacy_hybrid.storage.add_update_listener(lambda: fired.append("storage"))
-    legacy_hybrid.storage_eps.add_update_listener(lambda: fired.append("eps"))
-
-    report = await legacy_hybrid.async_update()
-
-    assert report.complete
-    assert sorted(fired) == ["eps", "storage"]

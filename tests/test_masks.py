@@ -23,8 +23,7 @@ from modbus_connection import (
 )
 from modbus_connection.mock import MockModbusUnit
 
-from sofar_modbus import SofarInverter
-from sofar_modbus.modern import InverterSilentError, async_detect_type
+from sofar_modbus import InverterSilentError, SofarInverter, async_detect_type
 from sofar_modbus.variants import (
     EPS,
     GEN,
@@ -42,8 +41,8 @@ from sofar_modbus.variants import (
 )
 
 from .conftest import (
+    HOLDING,
     HYBRID_SERIAL,
-    MODERN_HOLDING,
     ascii_words,
     yield_before_reads,
 )
@@ -153,7 +152,7 @@ def unknown_inverter(
     unit: MockModbusUnit, masks: dict[int, int], *, read_pm: bool = False
 ) -> SofarInverter:
     """An inverter whose serial is unknown, publishing ``masks``."""
-    unit.holding.update(MODERN_HOLDING)
+    unit.holding.update(HOLDING)
     for base, mask in masks.items():
         unit.holding[base] = mask_registers(mask)
     return SofarInverter(unit, serial_number=UNKNOWN_SERIAL, read_pm=read_pm)
@@ -163,7 +162,7 @@ def known_inverter(
     unit: MockModbusUnit, pv_mask: int, *, inverter_type: InverterType | None = None
 ) -> SofarInverter:
     """An inverter the prefix table knows, publishing ``pv_mask``."""
-    unit.holding.update(MODERN_HOLDING)
+    unit.holding.update(HOLDING)
     unit.holding[0x0580] = mask_registers(pv_mask)
     return SofarInverter(unit, serial_number=ESI_SERIAL, inverter_type=inverter_type)
 
@@ -171,7 +170,7 @@ def known_inverter(
 @pytest.fixture
 def pv_inverter(mock_modbus_unit: MockModbusUnit) -> SofarInverter:
     """A PV-only inverter, which has no battery tower to ask about."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     return SofarInverter(
         mock_modbus_unit, serial_number=HYBRID_SERIAL, inverter_type=PV | X1
     )
@@ -349,7 +348,7 @@ async def test_a_model_without_the_component_is_not_asked(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """No point paying for a mask read to gate what is never polled."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     device = SofarInverter(
         mock_modbus_unit, serial_number=HYBRID_SERIAL, inverter_type=GEN | X1
     )
@@ -785,7 +784,7 @@ async def test_detection_takes_an_unknown_serial_type_from_the_masks(
 async def test_detection_with_a_known_serial_reads_no_mask(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     await SofarInverter.async_detect(mock_modbus_unit)
     assert not any(event.address & 0x3F == 0 for event in mock_modbus_unit.read_events)
 

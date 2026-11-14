@@ -19,16 +19,16 @@ from modbus_connection import (
 )
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit, WriteEvent
 
-from sofar_modbus import SofarInverter
-from sofar_modbus.modern import (
+from sofar_modbus import (
     READING_COMPONENTS,
     SETTING_COMPONENTS,
     BatteryTowerSilentError,
+    SofarInverter,
 )
-from sofar_modbus.modern.device import BATTERY_PACKS
+from sofar_modbus.device import BATTERY_PACKS
 
 from .conftest import (
-    MODERN_HOLDING,
+    HOLDING,
     ascii_words,
     drop_link_on_read,
     yield_before_reads,
@@ -93,7 +93,7 @@ def switch_on_selection(
 @pytest.fixture
 def tower_unit(mock_modbus_unit: MockModbusUnit) -> MockModbusUnit:
     """A three-group BTS tower serving whichever pack is selected."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.holding.update(TOWER_HOLDING)
     mock_modbus_unit.holding.update(PACK_HOLDING[0x0000])
     switch_on_selection(mock_modbus_unit, PACK_HOLDING)
@@ -356,7 +356,7 @@ async def test_a_pack_the_tower_ignored_does_not_move_the_start(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """The tower still serves the last pack that answered."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.holding.update(TOWER_HOLDING)
     mock_modbus_unit.holding.update(PACK_HOLDING[0x0000])
     switch_on_selection(
@@ -387,7 +387,7 @@ async def test_the_layout_is_never_read_again(
 async def test_a_pack_that_is_not_switched_to_fails_alone(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.holding.update(TOWER_HOLDING)
     mock_modbus_unit.holding.update(PACK_HOLDING[0x0000])
     switch_on_selection(

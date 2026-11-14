@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from modbus_connection.model import uint32
 
-from ..model import TornReadCorrectedComponent, corrected_total
-from ..variants import HYBRID, PV
+from .model import TornReadCorrectedComponent, corrected_total
+from .variants import HYBRID, PV
 
 
 class EnergyTotals(TornReadCorrectedComponent):
