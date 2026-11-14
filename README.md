@@ -21,9 +21,11 @@ Includes the Azzurro and ZCS rebadges.
 **Have an older-generation inverter?** Those use a different register map
 (the 0x0000 and 0x0200 blocks), and support for them needs someone who can test
 on the real thing. If you own one and would like to help bring it back, please
-[open an issue](https://github.com/darkrain-nl/sofar-modbus/issues): a few
-register reads from your inverter are enough to get started, and an earlier
-draft of the map in the git history gives a head start.
+[open an issue](https://github.com/darkrain-nl/sofar-modbus/issues) with the
+output of `uv run script/query.py <address> --legacy` (see [Checking a real
+inverter](#checking-a-real-inverter)). It reads just the serial number and the
+raw register blocks, which is enough to get started, and an earlier draft of the
+map in the git history gives a head start.
 
 What an inverter serves depends on its model: single or three phase, PV-only
 or hybrid, how many MPPT trackers, whether off-grid (EPS) and parallel-system
@@ -358,6 +360,8 @@ uv run script/query.py 192.168.1.50 --port 502 --unit 1
 uv run script/query.py socket://192.168.1.50:8899 --transport serial --unit 1
 # a USB or serial adapter
 uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1
+# an older-generation inverter: its serial and raw blocks, for an issue
+uv run script/query.py 192.168.1.50 --legacy
 # every register read, plus ranges the library does not model
 uv run script/query.py 192.168.1.50 --raw --registers 0x1480:40 --registers 0x2004
 # a hybrid with a BTS tower, every pack included, with the reasons
@@ -378,12 +382,14 @@ to include in an issue about a wrong value.
 It also prints the address masks and the type they declare on their own, next
 to the type from the serial. A mismatch there, such as the masks declaring a PV
 string the serial's profile lacks, is the first thing to look for when entities
-are missing. The lines after it are the
-library's own verdicts (unrecognized, battery tower, wired battery strings,
-clock and IV-curve support), which decide what Home Assistant creates.
-`--registers ADDR[:COUNT]` reads any holding range raw, up to 125 registers
-per range, for checking a register the library does not model yet. All of
-these reads come after the poll, so they do not count towards its timings.
+are missing. The lines after it are the library's own verdicts (unrecognized,
+battery tower, wired battery strings, clock and IV-curve support), which decide
+what Home Assistant creates. `--registers ADDR[:COUNT]` reads any holding range
+raw, up to 125 registers per range, for checking a register the library does
+not model yet. All of these reads come after the poll, so they do not count
+towards its timings. `--legacy` skips all of that for an older-generation
+inverter: it prints the serial number from input register 0x2002 and the raw
+0x0000, 0x0200 and 0x0250 blocks, plus any `--registers` ranges.
 `--packs` runs the pack poll twice, the way Home Assistant does every five
 minutes, and prints each poll's outcome, reads and time, then the tower's
 layout and every pack. The second poll starts at the pack the first left

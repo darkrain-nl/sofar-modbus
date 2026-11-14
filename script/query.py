@@ -37,6 +37,11 @@ PACK_SWEEPS = 2
 
 RegisterRead = tuple[int, int, list[int] | str]
 
+# An older inverter keeps its serial in the input registers.
+LEGACY_SERIAL = (0x2002, 6)
+# The holding blocks the earlier draft of the older map read.
+LEGACY_BLOCKS = [(0x0000, 0x21), (0x0200, 0x46), (0x0250, 6)]
+
 EXAMPLES = """examples:
   # a gateway answering Modbus TCP: pass no framing (502 is the default)
   uv run script/query.py 192.168.1.50 --port 502 --unit 1
@@ -44,6 +49,8 @@ EXAMPLES = """examples:
   uv run script/query.py socket://192.168.1.50:8899 --transport serial --unit 1
   # a USB or serial adapter
   uv run script/query.py /dev/ttyUSB0 --transport serial --unit 1
+  # an older-generation inverter: its serial and raw blocks, for an issue
+  uv run script/query.py 192.168.1.50 --legacy
   # every register read, plus ranges the library does not model
   uv run script/query.py 192.168.1.50 --raw --registers 0x1480:40 --registers 0x2004
   # a hybrid with a BTS tower, every pack included, with the reasons
@@ -201,6 +208,19 @@ def _print_registers(reads: list[RegisterRead]) -> None:
             print(f"  0x{start + offset:04X}  0x{value:04X}  {value}")
 
 
+async def _query_legacy(unit: TimedUnit, ranges: list[tuple[int, int]]) -> None:
+    """Print an older inverter's serial and raw blocks, decoding nothing."""
+    try:
+        words = await unit.read_input_registers(*LEGACY_SERIAL)
+    except ModbusError as err:
+        serial = _error(err)
+    else:
+        serial = b"".join(word.to_bytes(2) for word in words).decode("ascii", "replace")
+    _line("Serial number", serial.strip("\x00 "))
+    _print_registers(await _read_registers(unit, [*LEGACY_BLOCKS, *ranges]))
+    print(f"\n{unit.reads} Modbus reads, {_timings(unit.stats)}")
+
+
 async def main() -> int:
     """Read one inverter and print it."""
     # Silence the backend's connect traceback; one line below says it.
@@ -213,6 +233,11 @@ async def main() -> int:
     )
     add_connection_args(parser, connections=CONNECTIONS)
     parser.add_argument("--unit", type=int, default=1, help="Modbus unit id")
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="an older-generation inverter: print its serial and raw blocks only",
+    )
     parser.add_argument(
         "--pm",
         action="store_true",
@@ -241,6 +266,8 @@ async def main() -> int:
         help="print the library's log, which says why each verdict was reached",
     )
     args = parser.parse_args()
+    if args.legacy and (args.pm or args.raw or args.packs):
+        parser.error("--legacy reads raw blocks only; drop --pm, --raw and --packs")
     if args.debug:
         library_log = logging.getLogger("sofar_modbus")
         library_log.setLevel(logging.DEBUG)
@@ -253,6 +280,12 @@ async def main() -> int:
         return 1
 
     timed = TimedUnit(connection.for_unit(args.unit))
+    if args.legacy:
+        try:
+            await _query_legacy(timed, args.registers)
+        finally:
+            await connection.close()
+        return 0
     sweeps: list[str] = []
     try:
         inverter = await SofarInverter.async_detect(timed, read_pm=args.pm)
