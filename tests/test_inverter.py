@@ -30,6 +30,7 @@ from sofar_modbus import (
     Fault19,
     Fault30,
     FeedInLimitationMode,
+    ParallelControlMode,
     ParallelRole,
     PassiveModeTimeoutAction,
     PowerControlFlags,
@@ -609,7 +610,7 @@ async def test_settings(hybrid: SofarInverter) -> None:
     assert hybrid.feed_in.feedin_max_power == pytest.approx(5000)  # raw * 100
     assert hybrid.eps.eps_control is EpsControlMode.TURN_ON_ENABLE_COLD_START
     assert hybrid.battery_active_control.battery_active_control is True
-    assert hybrid.parallel.parallel_control is True
+    assert hybrid.parallel.parallel_control is ParallelControlMode.AC
     assert hybrid.parallel.parallel_role is ParallelRole.PRIMARY
     assert hybrid.parallel.parallel_address == 3
     assert hybrid.battery_config.bat_config_charging_voltage == pytest.approx(256.0)
@@ -647,6 +648,14 @@ async def test_write_remote_switch(
 ) -> None:
     await hybrid.remote.write("remote_switch_on_off", RemoteSwitchOnOff.OFF)
     assert await mock_modbus_unit.read_holding_registers(0x1104, 1) == [0]
+
+
+async def test_parallel_control_tells_ac_and_battery_apart(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    mock_modbus_unit.holding[0x1035] = 2
+    await hybrid.async_update()
+    assert hybrid.parallel.parallel_control is ParallelControlMode.AC_AND_BATTERY
 
 
 async def test_parallel_address_is_validated(

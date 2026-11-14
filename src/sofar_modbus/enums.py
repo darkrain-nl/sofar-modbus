@@ -535,6 +535,14 @@ class EpsControlMode(IntEnum):
     TURN_ON_ENABLE_COLD_START = 2
 
 
+class ParallelControlMode(IntEnum):
+    """Which parallel function is enabled."""
+
+    DISABLED = 0
+    AC = 1
+    AC_AND_BATTERY = 2
+
+
 class ParallelRole(IntEnum):
     """Role of this inverter in a parallel system."""
 
