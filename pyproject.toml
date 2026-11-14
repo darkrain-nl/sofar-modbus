@@ -12,10 +12,12 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "sofar-modbus contributors" }]
 keywords = ["modbus", "sofar", "sofar-solar", "inverter", "solar", "home-assistant"]
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python :: 3",
     "Topic :: Home Automation",
+    "Typing :: Typed",
 ]
-# The caller injects a ModbusUnit; tmodbus is the backend this is exercised against.
+# Callers inject the unit; tmodbus is the backend tests run against.
 dependencies = ["modbus-connection[tmodbus]>=4.12.1"]
 
 [project.urls]
@@ -43,9 +45,7 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "D"]
-# D401 wants imperative docstrings; this codebase names things ("The inverter
-# type a serial implies"), matching modbus-connection's own style. D107 is
-# covered by the class docstring.
+# Docstrings name things, like modbus-connection's; class covers D107.
 ignore = ["D107", "D401"]
 
 [tool.ruff.lint.pydocstyle]
@@ -57,8 +57,7 @@ files = ["src", "tests", "script"]
 strict = true
 
 [tool.ruff.lint.per-file-ignores]
-# A test's name is its documentation; docstrings are for the ones that need a why.
+# A test's name documents it; a docstring is only for a needed why.
 "tests/*" = ["D100", "D103", "D104"]
-# Most of TimedUnit is pass-throughs onto a documented protocol, and a
-# docstring on each would only repeat what ModbusUnit already says.
+# TimedUnit's pass-throughs would only repeat ModbusUnit's docstrings.
 "src/sofar_modbus/tuning.py" = ["D102"]
