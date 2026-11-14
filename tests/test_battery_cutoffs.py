@@ -9,9 +9,9 @@ from modbus_connection import ModbusError
 from modbus_connection.mock import MockModbusUnit, WriteEvent
 
 from sofar_modbus import (
-    BatConfigWriteStatus,
     BatteryConfig,
     BatteryConfigWriteError,
+    BatteryConfigWriteStatus,
     InverterType,
     SofarInverter,
 )
@@ -47,7 +47,7 @@ def writes(hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit) -> list[Writ
 
     def commit(event: WriteEvent) -> None:
         writes.append(event)
-        mock_modbus_unit.holding[STATUS] = BatConfigWriteStatus.SUCCESS
+        mock_modbus_unit.holding[STATUS] = BatteryConfigWriteStatus.SUCCESS
 
     mock_modbus_unit.on_write(commit)
     return writes
@@ -288,12 +288,12 @@ async def test_a_changed_charge_cutoff_alone_is_written(
     assert len(writes) == 1
 
 
-@pytest.mark.parametrize("status", list(BatConfigWriteStatus)[2:])
+@pytest.mark.parametrize("status", list(BatteryConfigWriteStatus)[2:])
 async def test_a_failed_commit_raises_its_status(
     hybrid: SofarInverter,
     mock_modbus_unit: MockModbusUnit,
     writes: list[WriteEvent],
-    status: BatConfigWriteStatus,
+    status: BatteryConfigWriteStatus,
 ) -> None:
     report(mock_modbus_unit, status)
     with pytest.raises(BatteryConfigWriteError) as err:
@@ -303,7 +303,7 @@ async def test_a_failed_commit_raises_its_status(
 
 
 def test_every_documented_failure_is_covered() -> None:
-    assert [int(status) for status in BatConfigWriteStatus][2:] == [
+    assert [int(status) for status in BatteryConfigWriteStatus][2:] == [
         0xFFFB,
         0xFFFC,
         0xFFFD,
@@ -328,10 +328,10 @@ async def test_a_commit_busy_for_good_raises(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit, writes: list[WriteEvent]
 ) -> None:
     """The poll is bounded, so a stuck inverter cannot hang the caller."""
-    report(mock_modbus_unit, BatConfigWriteStatus.BUSY)
+    report(mock_modbus_unit, BatteryConfigWriteStatus.BUSY)
     with pytest.raises(BatteryConfigWriteError) as err:
         await hybrid.async_write_battery_cutoffs(31, 10, 15)
-    assert err.value.status is BatConfigWriteStatus.BUSY
+    assert err.value.status is BatteryConfigWriteStatus.BUSY
     assert status_reads(mock_modbus_unit) == 20
 
 

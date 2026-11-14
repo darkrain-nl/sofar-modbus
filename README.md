@@ -198,11 +198,10 @@ await inverter.async_update_settings()  # rarely, and after a write
 `readings_components` and `settings_components` stay empty until the first
 poll settles what the inverter serves, which needs it to answer. A caller that
 has to lay out entities before then, say at night, can use
-`expected_readings_components` and `expected_settings_components`, or
-`expected_components` for both as one set: the components the serial's type
-implies, without touching the link. Once setup
-settles they return the same lists as the plain properties, so setup can still
-add the off-grid components it probed for and drop the ones a mask denies. An
+`expected_components`: the components the serial's type implies, as one set,
+without touching the link. Once setup settles it holds what the two plain
+properties list, so setup can still add the off-grid components it probed for
+and drop the ones a mask denies. An
 unrecognised serial expects nothing, as its type comes from the masks.
 
 This is worth scheduling: a three-phase HYD hybrid polls 286 registers in 31
@@ -220,10 +219,10 @@ registers the device insists on receiving as a block. `write()` by field name
 still reaches any writable field.
 
 ```python
-from sofar_modbus import ChargerUseMode, FeedinLimitationMode
+from sofar_modbus import ChargerUseMode, FeedInLimitationMode
 
 await inverter.charger.async_write_mode(ChargerUseMode.PASSIVE_MODE)
-await inverter.feed_in.async_write_limit(FeedinLimitationMode.DISABLED, 3000)
+await inverter.feed_in.async_write_limit(FeedInLimitationMode.DISABLED, 3000)
 await inverter.passive.async_write_power(
     grid_power=-2000, battery_min=0, battery_max=5000
 )
@@ -254,7 +253,7 @@ It reads the battery configuration fresh, writes it back with only those values
 changed, and reads it again to prove the commit: the status register can report
 success for an older write. A commit the inverter refuses, or does not keep,
 raises `BatteryConfigWriteError`, a `ModbusError` carrying the reported
-`BatConfigWriteStatus`. Each commit is a stored write, so values already set are
+`BatteryConfigWriteStatus`. Each commit is a stored write, so values already set are
 not written again, and the call is not meant for automations that run often.
 Three-phase hybrids only, and a lead-acid battery is refused: both need a
 write no owner has tested yet.

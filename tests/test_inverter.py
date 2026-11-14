@@ -29,8 +29,9 @@ from sofar_modbus import (
     Fault13,
     Fault19,
     Fault30,
-    FeedinLimitationMode,
-    ParallelMasterslave,
+    FeedInLimitationMode,
+    ParallelControlMode,
+    ParallelRole,
     PassiveModeTimeoutAction,
     PowerControlFlags,
     RemoteSwitchOnOff,
@@ -38,8 +39,8 @@ from sofar_modbus import (
     SyncRtcResult,
     SystemState,
     battery_pack,
-    identify,
 )
+from sofar_modbus.device import identify
 from sofar_modbus.variants import (
     BAT_BTS,
     EPS,
@@ -149,7 +150,7 @@ async def test_expected_components_come_from_the_type_before_setup(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
     """A caller can lay out entities before the inverter first answers."""
-    assert hybrid.expected_readings_components == (
+    assert hybrid.expected_components == {
         "state",
         "grid",
         "pv_1_2",
@@ -160,8 +161,6 @@ async def test_expected_components_come_from_the_type_before_setup(
         "meter_energy",
         "battery_energy",
         "fault_log",
-    )
-    assert hybrid.expected_settings_components == (
         "rtc_sync",
         "feed_in",
         "battery_active_control",
@@ -172,22 +171,15 @@ async def test_expected_components_come_from_the_type_before_setup(
         "active_power_control",
         "charger",
         "passive",
-    )
+        BATTERY_PACKS,
+    }
     assert not mock_modbus_unit.read_events
-
-    await hybrid.async_update()
-
-    assert hybrid.expected_readings_components == hybrid.readings_components
-    assert hybrid.expected_settings_components == hybrid.settings_components
-    assert "offgrid" in hybrid.expected_readings_components
 
 
 async def test_expected_components_cover_both_polls(
     hybrid: SofarInverter,
 ) -> None:
     before = hybrid.expected_components
-    assert len(before) == 21
-    assert {"grid", "feed_in", BATTERY_PACKS} <= before
 
     await hybrid.async_update()
 
@@ -208,10 +200,10 @@ async def test_expected_components_survive_a_failed_setup(
     mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.fail_read(0x0504, ServerDeviceFailureError())
     inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
-    before = inverter.expected_readings_components
+    before = inverter.expected_components
     with pytest.raises(ServerDeviceFailureError):
         await inverter.async_update()
-    assert inverter.expected_readings_components == before
+    assert inverter.expected_components == before
 
 
 def test_an_unknown_serial_expects_nothing_before_setup(
@@ -219,8 +211,7 @@ def test_an_unknown_serial_expects_nothing_before_setup(
 ) -> None:
     """The masks settle an unknown type, and they need setup to be read."""
     inverter = SofarInverter(mock_modbus_unit, serial_number="NOPE000000001")
-    assert inverter.expected_readings_components == ()
-    assert inverter.expected_settings_components == ()
+    assert inverter.expected_components == frozenset()
 
 
 async def test_readings_and_settings_polls_are_disjoint(
@@ -614,13 +605,13 @@ async def test_settings(hybrid: SofarInverter) -> None:
     assert hybrid.rtc_sync.sync_rtc_result is SyncRtcResult.SUCCESSFUL
     assert (
         hybrid.feed_in.feedin_limitation_mode
-        is FeedinLimitationMode.ENABLED_FEED_IN_LIMITATION
+        is FeedInLimitationMode.ENABLED_FEED_IN_LIMITATION
     )
     assert hybrid.feed_in.feedin_max_power == pytest.approx(5000)  # raw * 100
     assert hybrid.eps.eps_control is EpsControlMode.TURN_ON_ENABLE_COLD_START
     assert hybrid.battery_active_control.battery_active_control is True
-    assert hybrid.parallel.parallel_control is True
-    assert hybrid.parallel.parallel_masterslave is ParallelMasterslave.MASTER
+    assert hybrid.parallel.parallel_control is ParallelControlMode.AC
+    assert hybrid.parallel.parallel_role is ParallelRole.PRIMARY
     assert hybrid.parallel.parallel_address == 3
     assert hybrid.battery_config.bat_config_charging_voltage == pytest.approx(256.0)
     assert hybrid.remote.remote_switch_on_off is RemoteSwitchOnOff.ON
@@ -659,6 +650,14 @@ async def test_write_remote_switch(
     assert await mock_modbus_unit.read_holding_registers(0x1104, 1) == [0]
 
 
+async def test_parallel_control_tells_ac_and_battery_apart(
+    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+) -> None:
+    mock_modbus_unit.holding[0x1035] = 2
+    await hybrid.async_update()
+    assert hybrid.parallel.parallel_control is ParallelControlMode.AC_AND_BATTERY
+
+
 async def test_parallel_address_is_validated(
     hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
 ) -> None:
@@ -674,10 +673,10 @@ async def test_feed_in_limit_writes_both_registers(
 ) -> None:
     events: list[WriteEvent] = []
     mock_modbus_unit.on_write(events.append)
-    await hybrid.feed_in.async_write_limit(FeedinLimitationMode.DISABLED, 3000)
+    await hybrid.feed_in.async_write_limit(FeedInLimitationMode.DISABLED, 3000)
     assert [(e.address, e.values) for e in events] == [(0x1023, [0, 30])]
     with pytest.raises(ValueError, match="multiple of 100"):
-        await hybrid.feed_in.async_write_limit(FeedinLimitationMode.DISABLED, 3050)
+        await hybrid.feed_in.async_write_limit(FeedInLimitationMode.DISABLED, 3050)
 
 
 async def test_active_power_limit_writes_both_registers(

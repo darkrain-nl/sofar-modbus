@@ -1,4 +1,4 @@
-"""The old ``sofar_modbus.modern`` path Core still imports from."""
+"""Old import paths and names Core still uses."""
 
 from __future__ import annotations
 
@@ -32,3 +32,10 @@ def test_every_name_core_imports_is_the_same_object() -> None:
     assert faults.FAULTS is sofar_modbus.FAULTS
     assert faults.FaultCategory is sofar_modbus.FaultCategory
     assert faults.FaultLogEntry is sofar_modbus.FaultLogEntry
+
+
+def test_old_enum_names_are_the_renamed_classes() -> None:
+    assert sofar_modbus.BatConfigCellType is sofar_modbus.BatteryConfigCellType
+    assert sofar_modbus.BatConfigProtocol is sofar_modbus.BatteryConfigProtocol
+    assert sofar_modbus.BatConfigWriteStatus is sofar_modbus.BatteryConfigWriteStatus
+    assert sofar_modbus.FeedinLimitationMode is sofar_modbus.FeedInLimitationMode

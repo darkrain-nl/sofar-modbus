@@ -166,8 +166,8 @@ HOLDING: dict[int, int | list[int]] = {
     0x1029: 2,  # EPS -> Turn On, Enable Cold Start
     0x102A: 60,  # EPS wait time
     0x102B: 1,  # battery active control -> on
-    0x1035: 1,  # parallel control -> on
-    0x1036: 1,  # parallel role -> Master
+    0x1035: 1,  # parallel control -> AC
+    0x1036: 1,  # parallel role -> primary
     0x1037: 3,  # parallel address
     0x1044: 1,  # battery config id
     0x1046: 1,  # battery protocol -> PYLON
