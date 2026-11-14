@@ -11,11 +11,9 @@ from modbus_connection.mock import MockModbusUnit
 from modbus_connection.model import Component
 from syrupy.assertion import SnapshotAssertion
 
-from sofar_modbus import SofarInverter, SofarLegacyInverter
-from sofar_modbus.model import SofarLegacyComponent
+from sofar_modbus import SofarInverter
 from sofar_modbus.modern.battery import BatteryString
 from sofar_modbus.modern.pv import PvString
-from sofar_modbus.variants import matches
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -170,46 +168,3 @@ async def test_replayed_capture(
     inverter = await SofarInverter.async_detect(mock_modbus_unit)
     mock_modbus_unit.read_events.clear()
     assert await modern_snapshot(inverter, mock_modbus_unit, pv_strings) == snapshot
-
-
-def legacy_components(
-    inverter: SofarLegacyInverter,
-) -> dict[str, SofarLegacyComponent]:
-    """Every member a legacy inverter can poll, by its public name."""
-    return {
-        "pv_common": inverter.pv_common,
-        "pv_single_phase": inverter.pv_single_phase,
-        "pv_three_phase": inverter.pv_three_phase,
-        "storage": inverter.storage,
-        "storage_three_phase": inverter.storage_three_phase,
-        "storage_eps": inverter.storage_eps,
-        "hybrid_pv_1": inverter.hybrid_pv_1,
-        "hybrid_pv_2": inverter.hybrid_pv_2,
-        "battery_settings": inverter.battery_settings,
-    }
-
-
-@pytest.mark.parametrize("fixture", ["legacy_hybrid", "legacy_three_phase_pv"])
-async def test_legacy(
-    request: pytest.FixtureRequest,
-    mock_modbus_unit: MockModbusUnit,
-    snapshot: SnapshotAssertion,
-    fixture: str,
-) -> None:
-    """A seeded legacy inverter of each map."""
-    inverter: SofarLegacyInverter = request.getfixturevalue(fixture)
-    await inverter.async_update()
-    setup_reads = take_reads(mock_modbus_unit)
-    await inverter.async_update()
-    assert {
-        "type": inverter.inverter_type,
-        "setup reads": setup_reads,
-        "poll reads": take_reads(mock_modbus_unit),
-        "members": {
-            name: decoded(component)
-            for name, component in legacy_components(inverter).items()
-            if matches(inverter.inverter_type, component.applies_to)
-        },
-        "identity": decoded(inverter.identity),
-        "pv power total": inverter.pv_power_total,
-    } == snapshot

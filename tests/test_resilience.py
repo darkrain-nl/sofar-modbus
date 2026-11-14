@@ -11,7 +11,7 @@ from modbus_connection import (
 )
 from modbus_connection.mock import MockModbusUnit
 
-from sofar_modbus import SofarInverter, SofarLegacyInverter
+from sofar_modbus import SofarInverter
 
 from .conftest import HYBRID_SERIAL, MODERN_HOLDING, fail_then
 
@@ -74,20 +74,6 @@ async def test_every_component_refreshes_on_a_healthy_device(
     assert "battery_pack" not in report.updated
 
 
-async def test_legacy_containment_matches_the_modern_contract(
-    legacy_hybrid: SofarLegacyInverter, mock_modbus_unit: MockModbusUnit
-) -> None:
-    await legacy_hybrid.async_update()
-
-    mock_modbus_unit.holding[0x0210] = 80  # battery capacity changes
-    mock_modbus_unit.fail_read(0x0250, ModbusTimeoutError("slow PV block"))
-    report = await legacy_hybrid.async_update()
-
-    assert set(report.failed) == {"hybrid_pv_1"}
-    assert legacy_hybrid.storage.battery_capacity_charge == 80
-    assert legacy_hybrid.hybrid_pv_1.pv_power_1 == 3000.0  # previous value kept
-
-
 async def test_a_failed_setup_still_raises(mock_modbus_unit: MockModbusUnit) -> None:
     """Setup decides what a poll reads; without it nothing is partial."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
@@ -123,19 +109,6 @@ async def test_a_refusal_on_the_first_component_is_still_contained(
 
     assert set(report.failed) == {"state"}
     assert "grid" in report.updated
-
-
-async def test_legacy_fatal_timeout_matches_the_modern_contract(
-    legacy_hybrid: SofarLegacyInverter, mock_modbus_unit: MockModbusUnit
-) -> None:
-    await legacy_hybrid.async_update()
-
-    mock_modbus_unit.fail_read(0x0200, ModbusTimeoutError("inverter asleep"))
-    mock_modbus_unit.read_events.clear()
-    with pytest.raises(ModbusTimeoutError):
-        await legacy_hybrid.async_update()
-
-    assert len(mock_modbus_unit.read_events) == 1
 
 
 async def test_a_settings_poll_alone_gives_up_on_a_silent_inverter(

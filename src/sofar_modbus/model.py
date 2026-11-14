@@ -1,4 +1,4 @@
-"""The component bases the two protocol generations build on."""
+"""Component bases for Sofar inverters."""
 
 from __future__ import annotations
 
@@ -17,8 +17,6 @@ __all__ = [
     "REFUSALS",
     "CorrectedTotal",
     "SofarComponent",
-    "SofarComponentBase",
-    "SofarLegacyComponent",
     "TornReadCorrectedComponent",
     "UpdateReport",
     "corrected_total",
@@ -28,22 +26,11 @@ REFUSALS = (IllegalFunctionError, IllegalDataAddressError, IllegalDataValueError
 """The exceptions a Sofar inverter answers an unserved request with."""
 
 
-class SofarComponentBase(Component):
-    """Tags a sub-system with the inverter mask deciding if it's polled."""
+class SofarComponent(Component):
+    """A sub-system of the inverter, polled where its mask applies."""
 
     applies_to: InverterType = InverterType(0)
-
-
-class SofarComponent(SofarComponentBase):
-    """A sub-system of the current-generation (HYD / KTL-X) register map."""
-
-    max_span = 48  # the plugin's block_size for this generation
-
-
-class SofarLegacyComponent(SofarComponentBase):
-    """A sub-system of the older register map."""
-
-    max_span = 100  # the plugin's block_size for this generation
+    max_span = 48  # the plugin's block_size for this register map
 
 
 class TornReadCorrectedComponent(SofarComponent):

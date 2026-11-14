@@ -8,7 +8,7 @@ import pytest
 from modbus_connection import ModbusError
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
-from sofar_modbus import SofarInverter, SofarLegacyInverter
+from sofar_modbus import SofarInverter
 from sofar_modbus.modern import battery_pack
 
 
@@ -215,42 +215,6 @@ BATTERY_PACK_HOLDING: dict[int, int | list[int]] = {
     0x907C: 24,  # cells in this pack
 }
 
-LEGACY_HYBRID_SERIAL = "SM1E1234567890"
-LEGACY_THREE_PHASE_PV_SERIAL = "SC1E1234567890"
-
-LEGACY_HOLDING: dict[int, int | list[int]] = {
-    # -- 0x0000 block: PV inverter --
-    0x0000: 2,  # run mode -> Normal Mode
-    0x0006: 3805,  # PV voltage 1 -> 380.5 V
-    0x0007: 812,  # PV current 1 -> 8.12 A
-    0x0008: 3712,  # PV voltage 2 -> 371.2 V
-    0x000C: 250,  # three-phase: PV power 1 -> 2.50
-    0x000F: 480,  # three-phase: active power -> 4.80
-    0x0012: 2301,  # voltage R -> 230.1 V
-    0x0013: 1050,  # current R -> 10.50 A
-    0x0014: 2299,  # voltage S -> 229.9 V
-    0x0018: [0, 5000],  # total production -> 5000 kWh
-    0x001E: 41,  # heatsink temperature (three-phase)
-    0x0020: 6501,  # bus voltage -> 650.1 V
-    # -- 0x0200 block: storage inverter --
-    0x0200: 2,  # run mode -> Normal Mode
-    0x0206: 2302,  # voltage R -> 230.2 V
-    0x020D: 0xF830,  # battery power charge -> -20.00 (discharging)
-    0x020E: 512,  # battery voltage -> 51.2 V
-    0x0210: 76,  # battery capacity -> 76 %
-    0x0212: 0xFF38,  # measured power -> -2.00 kW (importing)
-    0x0213: 350,  # house load -> 3.50 kW
-    0x0216: 2280,  # EPS voltage -> 228.0 V
-    0x021C: [0, 4321],  # generation total -> 4321 kWh
-    0x0242: 315,  # generation time today -> 315 min
-    # -- 0x0250 block: hybrid PV strings --
-    0x0250: 3801,  # PV voltage 1 -> 380.1 V
-    0x0251: 800,  # PV current 1 -> 8.00 A
-    0x0252: 300,  # PV power 1 -> 3000 W (raw * 10)
-    0x0253: 3702,  # PV voltage 2 -> 370.2 V
-    0x0255: 250,  # PV power 2 -> 2500 W
-}
-
 
 @pytest.fixture(autouse=True)
 def instant_pack_switch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -264,21 +228,3 @@ def hybrid(mock_modbus_unit: MockModbusUnit) -> SofarInverter:
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     mock_modbus_unit.holding.update(BATTERY_PACK_HOLDING)
     return SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL, read_pm=True)
-
-
-@pytest.fixture
-def legacy_hybrid(mock_modbus_unit: MockModbusUnit) -> SofarLegacyInverter:
-    """An older single-phase storage inverter; EPS is auto-probed."""
-    mock_modbus_unit.holding.update(LEGACY_HOLDING)
-    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_HYBRID_SERIAL, 6)
-    return SofarLegacyInverter(mock_modbus_unit, serial_number=LEGACY_HYBRID_SERIAL)
-
-
-@pytest.fixture
-def legacy_three_phase_pv(mock_modbus_unit: MockModbusUnit) -> SofarLegacyInverter:
-    """An older three-phase PV inverter."""
-    mock_modbus_unit.holding.update(LEGACY_HOLDING)
-    mock_modbus_unit.input[0x2002] = ascii_words(LEGACY_THREE_PHASE_PV_SERIAL, 6)
-    return SofarLegacyInverter(
-        mock_modbus_unit, serial_number=LEGACY_THREE_PHASE_PV_SERIAL
-    )
