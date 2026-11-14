@@ -362,9 +362,9 @@ async def test_a_declared_charge_cutoff_is_polled(
 ) -> None:
     mock_modbus_unit.holding[0x1040] = CHARGE_CUTOFF_MASK
     mock_modbus_unit.holding[0x105B] = [95]
-    assert "battery_charge_cutoff" not in hybrid.expected_settings_components
+    assert "battery_charge_cutoff" not in hybrid.expected_components
     await hybrid.async_update()
-    assert "battery_charge_cutoff" in hybrid.expected_settings_components
+    assert "battery_charge_cutoff" in hybrid.expected_components
     assert hybrid.battery_charge_cutoff.bat_config_charge_cutoff_soc == 95
 
 
@@ -771,14 +771,19 @@ async def test_detection_takes_an_unknown_serial_type_from_the_masks(
     mock_modbus_unit.holding[0x0445] = ascii_words(UNKNOWN_SERIAL, 7)
     device = await SofarInverter.async_detect(mock_modbus_unit, read_pm=True)
     assert device.inverter_type == GEN | X3 | PV | PM
-    assert device.expected_readings_components == (
+    assert device.expected_components == {
         "state",
         "grid",
         "pv_1_2",
         "energy",
         "meter_energy",
         "fault_log",
-    )
+        "rtc_sync",
+        "feed_in",
+        "parallel",
+        "remote",
+        "active_power_control",
+    }
 
 
 async def test_detection_with_a_known_serial_reads_no_mask(

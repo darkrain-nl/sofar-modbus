@@ -14,7 +14,9 @@ from modbus_connection import ModbusError
 if TYPE_CHECKING:
     from modbus_connection import ModbusUnit
 
-WINDOW = 200
+__all__ = ["LinkStats", "LinkTuning", "TimedUnit"]
+
+_WINDOW = 200
 """Requests kept for the statistics, roughly twenty polls of an inverter."""
 
 
@@ -36,7 +38,7 @@ class TimedUnit:
     A unit is all a library holds, so its own traffic is all it sees.
     """
 
-    def __init__(self, unit: ModbusUnit, window: int = WINDOW) -> None:
+    def __init__(self, unit: ModbusUnit, window: int = _WINDOW) -> None:
         self._unit = unit
         self._samples: deque[tuple[float, str | None]] = deque(maxlen=window)
         self.reads = 0

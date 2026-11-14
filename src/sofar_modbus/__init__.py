@@ -19,13 +19,15 @@ from .device import (
     InverterSilentError,
     SilentError,
     SofarInverter,
-    identify,
 )
 from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
 from .enums import (
     BatConfigCellType,
     BatConfigProtocol,
     BatConfigWriteStatus,
+    BatteryConfigCellType,
+    BatteryConfigProtocol,
+    BatteryConfigWriteStatus,
     ChargerUseMode,
     EpsControlMode,
     Fault1,
@@ -54,8 +56,9 @@ from .enums import (
     Fault28,
     Fault29,
     Fault30,
+    FeedInLimitationMode,
     FeedinLimitationMode,
-    ParallelMasterslave,
+    ParallelMasterSlave,
     PassiveModeTimeoutAction,
     PowerControlFlags,
     RemoteSwitchOnOff,
@@ -91,9 +94,9 @@ from .settings import (
     ParallelControl,
     PassiveMode,
     RemoteControl,
-    RtcSyncResult,
+    RtcSync,
 )
-from .variants import InverterType, matches
+from .variants import InverterType
 
 __all__ = [
     "BATTERY_PACKS",
@@ -110,8 +113,11 @@ __all__ = [
     "BatteryActiveControl",
     "BatteryChargeCutoff",
     "BatteryConfig",
+    "BatteryConfigCellType",
     "BatteryConfigId",
+    "BatteryConfigProtocol",
     "BatteryConfigWriteError",
+    "BatteryConfigWriteStatus",
     "BatteryEnergy",
     "BatteryPack",
     "BatteryString",
@@ -158,6 +164,7 @@ __all__ = [
     "FaultLog",
     "FaultLogEntry",
     "FeedInLimit",
+    "FeedInLimitationMode",
     "FeedinLimitationMode",
     "GridOutput",
     "Identity",
@@ -170,7 +177,7 @@ __all__ = [
     "OffGridThreePhase",
     "OffGridTotals",
     "ParallelControl",
-    "ParallelMasterslave",
+    "ParallelMasterSlave",
     "PassiveMode",
     "PassiveModeTimeoutAction",
     "PowerControlFlags",
@@ -184,7 +191,7 @@ __all__ = [
     "PvStrings9To10",
     "RemoteControl",
     "RemoteSwitchOnOff",
-    "RtcSyncResult",
+    "RtcSync",
     "SilentError",
     "SofarComponent",
     "SofarInverter",
@@ -192,6 +199,4 @@ __all__ = [
     "SystemState",
     "UpdateReport",
     "async_detect_type",
-    "identify",
-    "matches",
 ]

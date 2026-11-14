@@ -519,8 +519,8 @@ class SyncRtcResult(IntEnum):
     OPERATION_FAILED_INPUT_PARAMETERS_INCORRECT = 65535
 
 
-class FeedinLimitationMode(IntEnum):
-    """FeedIn: Limitation Mode."""
+class FeedInLimitationMode(IntEnum):
+    """Feed-in limitation mode."""
 
     DISABLED = 0
     ENABLED_FEED_IN_LIMITATION = 1
@@ -535,15 +535,15 @@ class EpsControlMode(IntEnum):
     TURN_ON_ENABLE_COLD_START = 2
 
 
-class ParallelMasterslave(IntEnum):
-    """Parallel Master-Salve."""
+class ParallelMasterSlave(IntEnum):
+    """Parallel system role."""
 
     SLAVE = 0
     MASTER = 1
 
 
-class BatConfigProtocol(IntEnum):
-    """BatConfig: Protocol."""
+class BatteryConfigProtocol(IntEnum):
+    """Battery config: protocol."""
 
     FIRST_FLIGHT_BUILT_IN_BMS_DEFAULT = 0
     PIE_ENERGY_PROTOCOL_PYLON = 1
@@ -560,8 +560,8 @@ class BatConfigProtocol(IntEnum):
     MOVE_FOR = 12
 
 
-class BatConfigCellType(IntEnum):
-    """BatConfig: Cell Type."""
+class BatteryConfigCellType(IntEnum):
+    """Battery config: cell type."""
 
     LEAD_ACID = 0
     LITHIUM_IRON_PHOSPHATE = 1
@@ -572,8 +572,8 @@ class BatConfigCellType(IntEnum):
     FLOODED = 6
 
 
-class BatConfigWriteStatus(IntEnum):
-    """BatConfig: Control, as read back: the last write's status."""
+class BatteryConfigWriteStatus(IntEnum):
+    """Battery config: the last write's status, as read back."""
 
     SUCCESS = 0
     BUSY = 1
@@ -616,3 +616,10 @@ class PowerControlFlags(IntFlag):
 
     ACTIVE_POWER = 1 << 0
     """Apply Active_Power_Export_Limit (1106); bits 1-4 aren't written yet."""
+
+
+# Old names, kept until Core imports the new ones.
+BatConfigCellType = BatteryConfigCellType
+BatConfigProtocol = BatteryConfigProtocol
+BatConfigWriteStatus = BatteryConfigWriteStatus
+FeedinLimitationMode = FeedInLimitationMode

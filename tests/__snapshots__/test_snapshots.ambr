@@ -673,7 +673,7 @@
         'bat_config_address_3 @ 0x1055': 0,
         'bat_config_address_4 @ 0x1056': 0,
         'bat_config_capacity @ 0x104F': 0,
-        'bat_config_cell_type @ 0x1051': <BatConfigCellType.LITHIUM_IRON_PHOSPHATE: 1>,
+        'bat_config_cell_type @ 0x1051': <BatteryConfigCellType.LITHIUM_IRON_PHOSPHATE: 1>,
         'bat_config_charging_voltage @ 0x1048': 256.0,
         'bat_config_depth_of_discharge @ 0x104D': 0,
         'bat_config_end_of_discharge @ 0x104E': 0,
@@ -691,7 +691,7 @@
         'bat_config_address_1 @ 0x1045': 0,
         'bat_config_id @ 0x1044': 1,
         'bat_config_overvoltage_protection @ 0x1047': 0.0,
-        'bat_config_protocol @ 0x1046': <BatConfigProtocol.PIE_ENERGY_PROTOCOL_PYLON: 1>,
+        'bat_config_protocol @ 0x1046': <BatteryConfigProtocol.PIE_ENERGY_PROTOCOL_PYLON: 1>,
       }),
       'charger': dict({
         'charger_use_mode @ 0x1110': <ChargerUseMode.TIME_OF_USE: 1>,
@@ -701,13 +701,13 @@
         'passive_eps_wait_time @ 0x102A': 60,
       }),
       'feed_in': dict({
-        'feedin_limitation_mode @ 0x1023': <FeedinLimitationMode.ENABLED_FEED_IN_LIMITATION: 1>,
+        'feedin_limitation_mode @ 0x1023': <FeedInLimitationMode.ENABLED_FEED_IN_LIMITATION: 1>,
         'feedin_max_power @ 0x1024': 5000,
       }),
       'parallel': dict({
         'parallel_address @ 0x1037': 3,
         'parallel_control @ 0x1035': True,
-        'parallel_masterslave @ 0x1036': <ParallelMasterslave.MASTER: 1>,
+        'parallel_masterslave @ 0x1036': <ParallelMasterSlave.MASTER: 1>,
       }),
       'passive': dict({
         'passive_mode_battery_power_max @ 0x118B': 3000,
@@ -1114,7 +1114,7 @@
         'bat_config_address_3 @ 0x1055': 3,
         'bat_config_address_4 @ 0x1056': 4,
         'bat_config_capacity @ 0x104F': 300,
-        'bat_config_cell_type @ 0x1051': <BatConfigCellType.LEAD_ACID: 0>,
+        'bat_config_cell_type @ 0x1051': <BatteryConfigCellType.LEAD_ACID: 0>,
         'bat_config_charging_voltage @ 0x1048': 0.0,
         'bat_config_depth_of_discharge @ 0x104D': 73,
         'bat_config_end_of_discharge @ 0x104E': 90,
@@ -1132,7 +1132,7 @@
         'bat_config_address_1 @ 0x1045': 1,
         'bat_config_id @ 0x1044': 0,
         'bat_config_overvoltage_protection @ 0x1047': 500.0,
-        'bat_config_protocol @ 0x1046': <BatConfigProtocol.BTS_5K: 11>,
+        'bat_config_protocol @ 0x1046': <BatteryConfigProtocol.BTS_5K: 11>,
       }),
       'charger': dict({
         'charger_use_mode @ 0x1110': <ChargerUseMode.SELF_USE: 0>,
@@ -1142,7 +1142,7 @@
         'passive_eps_wait_time @ 0x102A': 1,
       }),
       'feed_in': dict({
-        'feedin_limitation_mode @ 0x1023': <FeedinLimitationMode.ENABLED_3_PHASE_LIMIT: 2>,
+        'feedin_limitation_mode @ 0x1023': <FeedInLimitationMode.ENABLED_3_PHASE_LIMIT: 2>,
         'feedin_max_power @ 0x1024': 7200,
       }),
       'passive': dict({
@@ -1469,7 +1469,7 @@
         'power_control @ 0x1105': <PowerControlFlags: 0>,
       }),
       'feed_in': dict({
-        'feedin_limitation_mode @ 0x1023': <FeedinLimitationMode.DISABLED: 0>,
+        'feedin_limitation_mode @ 0x1023': <FeedInLimitationMode.DISABLED: 0>,
         'feedin_max_power @ 0x1024': 4400,
       }),
       'remote': dict({

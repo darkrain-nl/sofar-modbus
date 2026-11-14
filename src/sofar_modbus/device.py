@@ -27,7 +27,11 @@ from .battery import (
 )
 from .battery_pack import BatteryPack, BatteryTower
 from .energy import BatteryEnergy, EnergyTotals, MeterEnergy
-from .enums import BatConfigCellType, BatConfigProtocol, BatConfigWriteStatus
+from .enums import (
+    BatteryConfigCellType,
+    BatteryConfigProtocol,
+    BatteryConfigWriteStatus,
+)
 from .fault_log import FaultLog
 from .inverter import GridOutput, Identity, InverterState
 from .masks import (
@@ -64,7 +68,7 @@ from .settings import (
     ParallelControl,
     PassiveMode,
     RemoteControl,
-    RtcSyncResult,
+    RtcSync,
 )
 from .tuning import LinkStats, LinkTuning, TimedUnit
 from .variants import (
@@ -106,10 +110,10 @@ _BAT_CONFIG_CELL_TYPE = BatteryConfig.bat_config_cell_type.address
 # Lead-acid chemistries take a 23-word write that nobody has tested.
 _LEAD_ACID = frozenset(
     {
-        BatConfigCellType.LEAD_ACID,
-        BatConfigCellType.AGM,
-        BatConfigCellType.GEL,
-        BatConfigCellType.FLOODED,
+        BatteryConfigCellType.LEAD_ACID,
+        BatteryConfigCellType.AGM,
+        BatteryConfigCellType.GEL,
+        BatteryConfigCellType.FLOODED,
     }
 )
 _BAT_CONFIG_CONTROL = 0x1053
@@ -245,10 +249,10 @@ def _silent_on_open_link(
 class BatteryConfigWriteError(ModbusError):
     """The inverter did not take a battery config write."""
 
-    status: BatConfigWriteStatus | None
+    status: BatteryConfigWriteStatus | None
     """The reported failure; ``None`` when the status cannot tell."""
 
-    def __init__(self, message: str, status: BatConfigWriteStatus | None) -> None:
+    def __init__(self, message: str, status: BatteryConfigWriteStatus | None) -> None:
         super().__init__(message)
         self.status = status
 
@@ -327,7 +331,7 @@ class SofarInverter(Device):
         self.meter_energy = MeterEnergy(link)
         self.battery_energy = BatteryEnergy(link)
         self.fault_log = FaultLog(link)
-        self.rtc_sync = RtcSyncResult(link)
+        self.rtc_sync = RtcSync(link)
         self.feed_in = FeedInLimit(link)
         self.eps = EpsControl(link)
         self.battery_active_control = BatteryActiveControl(link)
@@ -524,35 +528,19 @@ class SofarInverter(Device):
         return tuple(self._readings)
 
     @property
-    def expected_settings_components(self) -> tuple[str, ...]:
-        """Settings components polled, or the type's before setup.
-
-        Before setup none is expected that only its mask can declare.
-        """
-        if self._settled:
-            return tuple(self._settings)
-        return tuple(
-            name
-            for name in self._components_for(SETTING_COMPONENTS)
-            if name not in DECLARED_COMPONENTS
-        )
-
-    @property
-    def expected_readings_components(self) -> tuple[str, ...]:
-        """Reading components polled, or the type's before setup."""
-        if self._settled:
-            return tuple(self._readings)
-        return tuple(self._components_for(READING_COMPONENTS))
-
-    @property
     def expected_components(self) -> frozenset[str]:
         """Every component polled, or the type's before setup."""
-        polled = frozenset(self.expected_readings_components) | frozenset(
-            self.expected_settings_components
-        )
+        if self._settled:
+            polled = {*self._readings, *self._settings}
+        else:
+            # Only the mask can declare these, and setup has not read it.
+            polled = {
+                *self._components_for(READING_COMPONENTS),
+                *self._components_for(SETTING_COMPONENTS),
+            } - DECLARED_COMPONENTS.keys()
         if self.has_battery_tower:
-            return polled | {BATTERY_PACKS}
-        return polled
+            polled.add(BATTERY_PACKS)
+        return frozenset(polled)
 
     def _components_for(self, names: tuple[str, ...]) -> list[str]:
         """The components among ``names`` this inverter's type applies to."""
@@ -1150,7 +1138,7 @@ class SofarInverter(Device):
         # A BTS 5K reads cell type 0, a default its protocol ignores.
         if (
             current[_BAT_CONFIG_CELL_TYPE] in _LEAD_ACID
-            and current[_BAT_CONFIG_PROTOCOL] != BatConfigProtocol.BTS_5K
+            and current[_BAT_CONFIG_PROTOCOL] != BatteryConfigProtocol.BTS_5K
         ):
             raise ValueError("battery config writes are untested on lead-acid")
         if _holds(current, wanted):
@@ -1170,7 +1158,7 @@ class SofarInverter(Device):
             ],
         )
         if (status := await self._async_battery_config_status()) != (
-            BatConfigWriteStatus.SUCCESS
+            BatteryConfigWriteStatus.SUCCESS
         ):
             raise BatteryConfigWriteError(
                 f"inverter {self.serial_number} reports {status.name}", status
@@ -1191,21 +1179,21 @@ class SofarInverter(Device):
             )
         )
 
-    async def _async_battery_config_status(self) -> BatConfigWriteStatus:
+    async def _async_battery_config_status(self) -> BatteryConfigWriteStatus:
         """The commit's status once the inverter stops reporting busy."""
         for _ in range(_BAT_CONFIG_POLLS):
             [word] = await self.modbus_unit.read_holding_registers(
                 _BAT_CONFIG_CONTROL, 1
             )
-            if word not in BatConfigWriteStatus:
+            if word not in BatteryConfigWriteStatus:
                 raise BatteryConfigWriteError(
                     f"inverter {self.serial_number} reports status 0x{word:04X}",
                     None,
                 )
-            if word != BatConfigWriteStatus.BUSY:
-                return BatConfigWriteStatus(word)
+            if word != BatteryConfigWriteStatus.BUSY:
+                return BatteryConfigWriteStatus(word)
             await asyncio.sleep(_BAT_CONFIG_POLL_STEP)
-        return BatConfigWriteStatus.BUSY
+        return BatteryConfigWriteStatus.BUSY
 
 
 def _holds(words: Mapping[int, int], wanted: Mapping[int, int]) -> bool:

@@ -9,12 +9,12 @@ from modbus_connection.encode import encode_int
 from modbus_connection.model import boolean, enum, flags, gauge, int32, integer
 
 from .enums import (
-    BatConfigCellType,
-    BatConfigProtocol,
+    BatteryConfigCellType,
+    BatteryConfigProtocol,
     ChargerUseMode,
     EpsControlMode,
-    FeedinLimitationMode,
-    ParallelMasterslave,
+    FeedInLimitationMode,
+    ParallelMasterSlave,
     PassiveModeTimeoutAction,
     PowerControlFlags,
     RemoteSwitchOnOff,
@@ -30,7 +30,7 @@ def _parallel_address(value: int) -> int:
     return value
 
 
-class RtcSyncResult(SofarComponent):
+class RtcSync(SofarComponent):
     """Result of the last real-time-clock write."""
 
     applies_to = PV | HYBRID
@@ -43,11 +43,11 @@ class FeedInLimit(SofarComponent):
 
     applies_to = PV | HYBRID
 
-    feedin_limitation_mode = enum(0x1023, FeedinLimitationMode, signed=False)
+    feedin_limitation_mode = enum(0x1023, FeedInLimitationMode, signed=False)
     feedin_max_power = gauge(0x1024, 100, signed=False, unit="W")
 
     async def async_write_limit(
-        self, mode: FeedinLimitationMode, max_power: int
+        self, mode: FeedInLimitationMode, max_power: int
     ) -> None:
         """Set the feed-in mode and its power ceiling, in watts.
 
@@ -124,7 +124,7 @@ class ParallelControl(SofarComponent):
     applies_to = X3 | PV | HYBRID | PM
 
     parallel_control = boolean(0x1035)
-    parallel_masterslave = enum(0x1036, ParallelMasterslave, signed=False)
+    parallel_masterslave = enum(0x1036, ParallelMasterSlave, signed=False)
     parallel_address = integer(
         0x1037, signed=False, writable=_parallel_address, force_fc16=True
     )
@@ -138,7 +138,7 @@ class BatteryConfigId(SofarComponent):
 
     bat_config_id = integer(0x1044, signed=False)
     bat_config_address_1 = integer(0x1045, signed=False)
-    bat_config_protocol = enum(0x1046, BatConfigProtocol, signed=False)
+    bat_config_protocol = enum(0x1046, BatteryConfigProtocol, signed=False)
     bat_config_overvoltage_protection = gauge(0x1047, 0.1, signed=False, unit="V")
 
 
@@ -161,7 +161,7 @@ class BatteryConfig(SofarComponent):
     bat_config_end_of_discharge = integer(0x104E, signed=False, unit="%")
     bat_config_capacity = integer(0x104F, signed=False, unit="Ah")
     bat_config_rated_battery_voltage = gauge(0x1050, 0.1, signed=False, unit="V")
-    bat_config_cell_type = enum(0x1051, BatConfigCellType, signed=False)
+    bat_config_cell_type = enum(0x1051, BatteryConfigCellType, signed=False)
     bat_config_eps_buffer = integer(0x1052, signed=False, unit="%")
     bat_config_address_2 = integer(0x1054, signed=False)
     bat_config_address_3 = integer(0x1055, signed=False)
