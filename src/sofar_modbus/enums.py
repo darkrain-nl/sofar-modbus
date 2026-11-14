@@ -535,11 +535,11 @@ class EpsControlMode(IntEnum):
     TURN_ON_ENABLE_COLD_START = 2
 
 
-class ParallelMasterSlave(IntEnum):
-    """Parallel system role."""
+class ParallelRole(IntEnum):
+    """Role of this inverter in a parallel system."""
 
-    SLAVE = 0
-    MASTER = 1
+    SECONDARY = 0
+    PRIMARY = 1
 
 
 class BatteryConfigProtocol(IntEnum):

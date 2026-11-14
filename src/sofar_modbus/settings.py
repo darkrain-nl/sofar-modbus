@@ -14,7 +14,7 @@ from .enums import (
     ChargerUseMode,
     EpsControlMode,
     FeedInLimitationMode,
-    ParallelMasterSlave,
+    ParallelRole,
     PassiveModeTimeoutAction,
     PowerControlFlags,
     RemoteSwitchOnOff,
@@ -124,7 +124,7 @@ class ParallelControl(SofarComponent):
     applies_to = X3 | PV | HYBRID | PM
 
     parallel_control = boolean(0x1035)
-    parallel_masterslave = enum(0x1036, ParallelMasterSlave, signed=False)
+    parallel_role = enum(0x1036, ParallelRole, signed=False)
     parallel_address = integer(
         0x1037, signed=False, writable=_parallel_address, force_fc16=True
     )

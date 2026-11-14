@@ -30,7 +30,7 @@ from sofar_modbus import (
     Fault19,
     Fault30,
     FeedInLimitationMode,
-    ParallelMasterSlave,
+    ParallelRole,
     PassiveModeTimeoutAction,
     PowerControlFlags,
     RemoteSwitchOnOff,
@@ -610,7 +610,7 @@ async def test_settings(hybrid: SofarInverter) -> None:
     assert hybrid.eps.eps_control is EpsControlMode.TURN_ON_ENABLE_COLD_START
     assert hybrid.battery_active_control.battery_active_control is True
     assert hybrid.parallel.parallel_control is True
-    assert hybrid.parallel.parallel_masterslave is ParallelMasterSlave.MASTER
+    assert hybrid.parallel.parallel_role is ParallelRole.PRIMARY
     assert hybrid.parallel.parallel_address == 3
     assert hybrid.battery_config.bat_config_charging_voltage == pytest.approx(256.0)
     assert hybrid.remote.remote_switch_on_off is RemoteSwitchOnOff.ON

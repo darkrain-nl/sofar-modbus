@@ -707,7 +707,7 @@
       'parallel': dict({
         'parallel_address @ 0x1037': 3,
         'parallel_control @ 0x1035': True,
-        'parallel_masterslave @ 0x1036': <ParallelMasterSlave.MASTER: 1>,
+        'parallel_role @ 0x1036': <ParallelRole.PRIMARY: 1>,
       }),
       'passive': dict({
         'passive_mode_battery_power_max @ 0x118B': 3000,
