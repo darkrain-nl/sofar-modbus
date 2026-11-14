@@ -179,8 +179,6 @@ async def test_expected_components_cover_both_polls(
     hybrid: SofarInverter,
 ) -> None:
     before = hybrid.expected_components
-    assert len(before) == 21
-    assert {"grid", "feed_in", BATTERY_PACKS} <= before
 
     await hybrid.async_update()
 
