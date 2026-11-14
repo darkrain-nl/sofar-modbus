@@ -8,8 +8,8 @@ from typing import ClassVar
 
 from modbus_connection.model import RegisterField, gauge, integer
 
-from ..model import SofarComponent
-from ..variants import GEN, HYBRID
+from .model import SofarComponent
+from .variants import GEN, HYBRID
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,16 +6,16 @@ import collections
 
 from modbus_connection.mock import MockModbusUnit
 
-from sofar_modbus import SofarInverter
-from sofar_modbus.modern import (
+from sofar_modbus import (
     FAULTS,
     FAULTS_BY_ID,
     Fault1,
     Fault5,
     Fault11,
     FaultCategory,
+    SofarInverter,
 )
-from sofar_modbus.modern.inverter import _REGISTER_FAULTS
+from sofar_modbus.inverter import _REGISTER_FAULTS
 
 
 def test_table_is_complete() -> None:

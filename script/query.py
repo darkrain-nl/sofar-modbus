@@ -18,11 +18,11 @@ from modbus_connection.cli_helper import (
 )
 from modbus_connection.model import Component
 
-from sofar_modbus import SofarInverter
-from sofar_modbus.modern import (
+from sofar_modbus import (
     BATTERY_PACKS,
     BatteryPack,
     BatteryTowerSilentError,
+    SofarInverter,
     async_detect_type,
 )
 from sofar_modbus.tuning import LinkStats, TimedUnit

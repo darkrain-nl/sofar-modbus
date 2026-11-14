@@ -29,7 +29,7 @@ from sofar_modbus._tuner import (
 )
 from sofar_modbus.tuning import LinkTuning, TimedUnit
 
-from .conftest import HYBRID_SERIAL, MODERN_HOLDING, fail_then
+from .conftest import HOLDING, HYBRID_SERIAL, fail_then
 
 
 def test_an_inverter_requires_nothing_of_the_link_by_itself(
@@ -115,7 +115,7 @@ async def test_the_window_keeps_only_the_last_requests(
 async def test_an_inverter_times_its_own_requests(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     inverter = SofarInverter(
         mock_modbus_unit, serial_number=HYBRID_SERIAL, read_pm=True
     )
@@ -130,7 +130,7 @@ async def test_an_inverter_times_its_own_requests(
 async def test_an_inverter_reports_whether_its_link_is_open(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
     await inverter.async_update()
     assert inverter.connected
@@ -164,7 +164,7 @@ def _timed_out() -> UpdateReport:
 @pytest.fixture
 def tuned(mock_modbus_unit: MockModbusUnit) -> tuple[SofarInverter, LinkTuner]:
     """An inverter and the tuner its own polls report to."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     inverter = SofarInverter(
         mock_modbus_unit, serial_number=HYBRID_SERIAL, read_pm=True
     )
@@ -309,7 +309,7 @@ async def test_the_budget_caps_how_wide_a_poll_may_get(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """Thirty reads at fifty milliseconds would cost more than the budget."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     timed = TimedUnit(mock_modbus_unit)
     inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=1.0)
@@ -328,7 +328,7 @@ async def test_a_wider_budget_lets_the_ladder_climb(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """The same three desyncs, with room to answer them."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     timed = TimedUnit(mock_modbus_unit)
     inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=10.0)
@@ -511,7 +511,7 @@ async def test_a_gap_the_budget_caps_is_logged(
     mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A line that stays crowded at the cap is worth seeing in a log."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     timed = TimedUnit(mock_modbus_unit)
     inverter = SofarInverter(timed, serial_number=HYBRID_SERIAL, read_pm=True)
     tuner = LinkTuner(timed, budget=1.0)

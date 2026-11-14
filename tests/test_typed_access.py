@@ -7,15 +7,16 @@ from typing import assert_type
 import pytest
 from modbus_connection.mock import MockModbusUnit, WriteEvent
 
-from sofar_modbus import CorrectedTotal, SofarInverter
-from sofar_modbus.modern import (
+from sofar_modbus import (
     BATTERY_STRING_COMPONENTS,
     PV_STRING_COMPONENTS,
     BatteryEnergy,
     ChargerUseMode,
+    CorrectedTotal,
     EnergyTotals,
     MeterEnergy,
     RemoteSwitchOnOff,
+    SofarInverter,
 )
 
 _PV_FIELDS = ("voltage", "current", "power")

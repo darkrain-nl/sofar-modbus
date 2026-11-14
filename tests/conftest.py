@@ -8,8 +8,7 @@ import pytest
 from modbus_connection import ModbusError
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
-from sofar_modbus import SofarInverter
-from sofar_modbus.modern import battery_pack
+from sofar_modbus import SofarInverter, battery_pack
 
 
 def ascii_words(text: str, length: int) -> list[int]:
@@ -91,7 +90,7 @@ def yield_before_reads(monkeypatch: pytest.MonkeyPatch, unit: MockModbusUnit) ->
 # A three-phase HYD hybrid: selects HYBRID | X3 | GEN | BAT_BTS.
 HYBRID_SERIAL = "SP1ES12345678"
 
-MODERN_HOLDING: dict[int, int | list[int]] = {
+HOLDING: dict[int, int | list[int]] = {
     # -- state and faults --
     0x0404: 2,  # system state -> Grid-connected
     0x0405: 0,  # fault 1 -> none
@@ -225,6 +224,6 @@ def instant_pack_switch(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def hybrid(mock_modbus_unit: MockModbusUnit) -> SofarInverter:
     """A three-phase HYD hybrid; EPS is auto-probed, PM enabled."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.holding.update(BATTERY_PACK_HOLDING)
     return SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL, read_pm=True)

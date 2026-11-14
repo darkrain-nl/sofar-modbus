@@ -12,14 +12,15 @@ from modbus_connection import (
 )
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
-from sofar_modbus import SofarInverter, UpdateReport
-from sofar_modbus.modern import (
+from sofar_modbus import (
     BatteryTowerSilentError,
     InverterSilentError,
     SilentError,
+    SofarInverter,
+    UpdateReport,
 )
 
-from .conftest import HYBRID_SERIAL, MODERN_HOLDING, drop_link_on_read
+from .conftest import HOLDING, HYBRID_SERIAL, drop_link_on_read
 
 STATE_REGISTER = 0x0404
 GRID_REGISTER = 0x0484
@@ -71,7 +72,7 @@ async def test_a_first_up_timeout_on_an_open_link_is_silence(
 async def test_a_timeout_during_setup_on_an_open_link_is_silence(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.fail_read(RATING_REGISTER, ModbusTimeoutError("no rating"))
     inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
 
@@ -113,7 +114,7 @@ async def test_a_gateway_during_setup_on_an_open_link_is_silence(
 async def test_a_gateway_rating_during_setup_is_silence(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.fail_read(RATING_REGISTER, GatewayTargetError())
     inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
 
@@ -249,7 +250,7 @@ async def test_an_empty_poll_reports(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """An unknown serial without masks polls nothing at all."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     inverter = SofarInverter(mock_modbus_unit, serial_number="NOPE000000001")
 
     report = await inverter.async_update_readings()

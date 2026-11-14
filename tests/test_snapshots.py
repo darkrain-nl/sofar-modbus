@@ -12,8 +12,8 @@ from modbus_connection.model import Component
 from syrupy.assertion import SnapshotAssertion
 
 from sofar_modbus import SofarInverter
-from sofar_modbus.modern.battery import BatteryString
-from sofar_modbus.modern.pv import PvString
+from sofar_modbus.battery import BatteryString
+from sofar_modbus.pv import PvString
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -54,8 +54,8 @@ def battery_values(string: BatteryString) -> tuple[float | None, ...]:
     )
 
 
-def modern_components(inverter: SofarInverter) -> dict[str, Component]:
-    """Every component a modern inverter can poll, by its public name."""
+def polled_components(inverter: SofarInverter) -> dict[str, Component]:
+    """Every component an inverter can poll, by its public name."""
     return {
         "state": inverter.state,
         "grid": inverter.grid,
@@ -90,7 +90,7 @@ def modern_components(inverter: SofarInverter) -> dict[str, Component]:
     }
 
 
-async def modern_snapshot(
+async def inverter_snapshot(
     inverter: SofarInverter, unit: MockModbusUnit, pv_strings: range
 ) -> dict[str, Any]:
     """Run every read step, recording what each one sent."""
@@ -101,7 +101,7 @@ async def modern_snapshot(
     await inverter.async_read_identity()
     identity_reads = take_reads(unit)
     await inverter.async_update_packs()
-    components = modern_components(inverter)
+    components = polled_components(inverter)
     return {
         "model": inverter.model,
         "type": inverter.inverter_type,
@@ -145,7 +145,7 @@ async def test_hybrid(
     snapshot: SnapshotAssertion,
 ) -> None:
     """A seeded three-phase hybrid with a three-group BTS tower."""
-    assert await modern_snapshot(hybrid, mock_modbus_unit, range(1, 3)) == snapshot
+    assert await inverter_snapshot(hybrid, mock_modbus_unit, range(1, 3)) == snapshot
 
 
 @pytest.mark.parametrize(
@@ -167,4 +167,4 @@ async def test_replayed_capture(
         ]
     inverter = await SofarInverter.async_detect(mock_modbus_unit)
     mock_modbus_unit.read_events.clear()
-    assert await modern_snapshot(inverter, mock_modbus_unit, pv_strings) == snapshot
+    assert await inverter_snapshot(inverter, mock_modbus_unit, pv_strings) == snapshot

@@ -12,8 +12,8 @@ from modbus_connection import (
     ModbusTimeoutError,
 )
 
-from ..model import REFUSALS
-from ..variants import (
+from .model import REFUSALS
+from .variants import (
     BAT_BTS,
     GEN,
     HYBRID,

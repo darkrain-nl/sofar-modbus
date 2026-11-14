@@ -7,8 +7,6 @@ from enum import IntFlag
 
 from modbus_connection.model import enum, flags, gauge, integer, string, uint32
 
-from ..model import SofarComponent
-from ..variants import HYBRID, PV
 from .enums import (
     Fault1,
     Fault2,
@@ -39,6 +37,8 @@ from .enums import (
     SystemState,
 )
 from .faults import FAULTS_BY_ID, Fault
+from .model import SofarComponent
+from .variants import HYBRID, PV
 
 # Registers 20, 21, 24 and 25 are reserved with no bits assigned.
 _FAULT_ENUMS: tuple[type[IntFlag], ...] = (

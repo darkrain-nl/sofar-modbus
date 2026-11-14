@@ -13,7 +13,7 @@ from modbus_connection.mock import MockModbusUnit
 
 from sofar_modbus import SofarInverter
 
-from .conftest import HYBRID_SERIAL, MODERN_HOLDING, fail_then
+from .conftest import HOLDING, HYBRID_SERIAL, fail_then
 
 GRID_REGISTER = 0x0484
 
@@ -76,7 +76,7 @@ async def test_every_component_refreshes_on_a_healthy_device(
 
 async def test_a_failed_setup_still_raises(mock_modbus_unit: MockModbusUnit) -> None:
     """Setup decides what a poll reads; without it nothing is partial."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.fail_read(0x06ED, ModbusTimeoutError("no rating"))
     inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
     with pytest.raises(ModbusTimeoutError):

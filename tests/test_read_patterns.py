@@ -7,8 +7,7 @@ from collections.abc import Iterable
 import pytest
 from modbus_connection.mock import MockModbusUnit, ReadEvent
 
-from sofar_modbus import SofarInverter
-from sofar_modbus.modern import (
+from sofar_modbus import (
     BatteryStrings1To2,
     BatteryStrings3To8,
     PvString3,
@@ -17,9 +16,10 @@ from sofar_modbus.modern import (
     PvStrings5To6,
     PvStrings7To8,
     PvStrings9To10,
+    SofarInverter,
 )
 
-from .conftest import MODERN_HOLDING
+from .conftest import HOLDING
 
 BLOCK_SIZE = 48
 
@@ -141,7 +141,7 @@ async def test_the_battery_config_blocks_stay_apart(
 async def test_a_pv_only_inverter_never_touches_the_battery_registers(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     inverter = SofarInverter(mock_modbus_unit, serial_number="SH3E000001")
     blocks = await poll(inverter, mock_modbus_unit)
     read = covered(blocks)
@@ -156,7 +156,7 @@ async def test_a_pv_only_inverter_never_touches_the_battery_registers(
 async def test_the_extra_mppt_strings_are_only_read_where_they_exist(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     ten = SofarInverter(mock_modbus_unit, serial_number="SQ1ES1000001")
     ten_blocks = await poll(ten, mock_modbus_unit)
     assert covered(ten_blocks) >= set(range(0x0584, 0x05A2))
@@ -190,7 +190,7 @@ async def test_pv_string_6_power_reads_its_own_register(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """Upstream aliases string 6's power onto its current; the spec does not."""
-    mock_modbus_unit.holding.update(MODERN_HOLDING)
+    mock_modbus_unit.holding.update(HOLDING)
     mock_modbus_unit.holding[0x0594] = 250  # PV current 6 -> 2.5 A
     mock_modbus_unit.holding[0x0595] = 810  # PV power 6 -> 8.1 kW
     inverter = SofarInverter(mock_modbus_unit, serial_number="SQ1ES1000001")

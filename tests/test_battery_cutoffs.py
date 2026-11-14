@@ -8,13 +8,14 @@ import pytest
 from modbus_connection import ModbusError
 from modbus_connection.mock import MockModbusUnit, WriteEvent
 
-from sofar_modbus import InverterType, SofarInverter
-from sofar_modbus.modern import (
+from sofar_modbus import (
     BatConfigWriteStatus,
     BatteryConfig,
     BatteryConfigWriteError,
+    InverterType,
+    SofarInverter,
 )
-from sofar_modbus.modern import device as device_module
+from sofar_modbus import device as device_module
 from sofar_modbus.variants import GEN, HYBRID, PV, X1, X3
 
 from .conftest import HYBRID_SERIAL

@@ -104,7 +104,7 @@ different registers. Several bits are set at once, so no single one of them is
 `state.active_faults` decodes the lot into the subsystem each bit belongs to:
 
 ```python
-from sofar_modbus.modern import FaultCategory
+from sofar_modbus import FaultCategory
 
 faults = inverter.state.active_faults
 for fault in faults:
@@ -142,7 +142,7 @@ PV and battery strings are also reachable by number, as typed views that read
 through whichever component polls them:
 
 ```python
-from sofar_modbus.modern import PV_STRING_COMPONENTS
+from sofar_modbus import PV_STRING_COMPONENTS
 
 for number, component in PV_STRING_COMPONENTS.items():
     if component in inverter.readings_components:
@@ -214,7 +214,7 @@ registers the device insists on receiving as a block. `write()` by field name
 still reaches any writable field.
 
 ```python
-from sofar_modbus.modern import ChargerUseMode, FeedinLimitationMode
+from sofar_modbus import ChargerUseMode, FeedinLimitationMode
 
 await inverter.charger.async_write_mode(ChargerUseMode.PASSIVE_MODE)
 await inverter.feed_in.async_write_limit(FeedinLimitationMode.DISABLED, 3000)
@@ -257,7 +257,7 @@ A BTS battery tower multiplexes every pack onto one register block, so packs are
 read one at a time, by their own call rather than by either poll:
 
 ```python
-from sofar_modbus.modern import BATTERY_PACKS
+from sofar_modbus import BATTERY_PACKS
 
 report = await inverter.async_update_packs()
 for (group_nr, pack_nr), pack in inverter.battery_packs.items():
