@@ -506,9 +506,9 @@ a tuner only holds the unit it tunes.
 
 The register maps are derived from
 [homeassistant-solax-modbus](https://github.com/wills106/homeassistant-solax-modbus)
-(Apache-2.0), specifically its `plugin_sofar.py` and `plugin_sofar_old.py`. This
-library keeps that project's field keys, scale factors, units and per-model
-filtering, and is released under the same licence.
+(Apache-2.0), specifically its `plugin_sofar.py`. This library keeps that
+project's field keys, scale factors, units and per-model filtering, and is
+released under the same licence.
 
 Where upstream declares the same key twice, this library keeps both fields and
 the docstring on each carries upstream's name. Addresses follow the
