@@ -351,8 +351,7 @@ so one `except SilentError` catches either.
 The public API is every name `sofar_modbus` exports in its `__all__`, plus
 `sofar_modbus.tuning` for measuring a link. Import from those two and nothing
 else: the other submodules, and any name starting with an underscore, are
-internal and can move in any release. `sofar_modbus.modern` is an old import
-path kept for one consumer and goes away before 1.0.
+internal and can move in any release.
 
 From 1.0 on, releases follow [semantic versioning](https://semver.org): a
 change that breaks the public API needs a major version.

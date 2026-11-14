@@ -624,10 +624,3 @@ class PowerControlFlags(IntFlag):
 
     ACTIVE_POWER = 1 << 0
     """Apply Active_Power_Export_Limit (1106); bits 1-4 aren't written yet."""
-
-
-# Old names, kept until Core imports the new ones.
-BatConfigCellType = BatteryConfigCellType
-BatConfigProtocol = BatteryConfigProtocol
-BatConfigWriteStatus = BatteryConfigWriteStatus
-FeedinLimitationMode = FeedInLimitationMode
