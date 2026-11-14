@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from sofar_modbus.variants import (
-    AC,
     BAT_BTS,
     EPS,
     GEN,
@@ -30,7 +29,7 @@ def test_a_group_the_mask_ignores_matches_anything() -> None:
 def test_bits_within_a_group_are_or_ed() -> None:
     assert matches(PV | X1, PV | HYBRID)  # PV or hybrid: PV qualifies
     assert matches(HYBRID | X1, PV | HYBRID)
-    assert not matches(AC | X1, PV | HYBRID)  # AC is neither
+    assert not matches(X1 | GEN, PV | HYBRID)  # neither PV nor hybrid
 
 
 def test_groups_are_and_ed() -> None:
