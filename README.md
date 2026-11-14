@@ -460,18 +460,8 @@ moment the socket is. Two opening requests that go unanswered earn a quarter
 second, then half, then one, then two. This one is never given back: it costs a
 single wait per connect, and a device that needed it still does.
 
-`inverter.link_tuning` (or `tuner.tuning`) is what it asks of the link, which
-is worth putting in a diagnostics download. A standalone tuner can also be
-stored and restored:
-
-```python
-tuner.restore(saved)  # before the first poll
-...
-save(tuner.tuning)  # whenever it changes
-```
-
-Restoring brings back the patience that came with a wider gap, so a crowded
-line is not narrowed again straight after every restart.
+`inverter.link_tuning` is what it asks of the link, which is worth putting in
+a diagnostics download.
 
 The gap is per unit, so it paces this inverter's own frames and no one else's.
 A line shared with another device cannot be quieted from here, only from

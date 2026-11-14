@@ -18,8 +18,9 @@ from modbus_connection import (
 )
 from modbus_connection.model import Device, Raw
 
+from .._tuner import LinkTuner
 from ..model import REFUSALS, SofarComponent, UpdateReport
-from ..tuning import LinkStats, LinkTuner, LinkTuning, TimedUnit
+from ..tuning import LinkStats, LinkTuning, TimedUnit
 from ..variants import (
     BAT_BTS,
     EPS,

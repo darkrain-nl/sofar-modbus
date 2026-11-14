@@ -19,16 +19,15 @@ from modbus_connection.mock import MockModbusUnit
 from modbus_connection.model import UpdateReport
 
 from sofar_modbus import SofarInverter
-from sofar_modbus.tuning import (
+from sofar_modbus._tuner import (
     CONNECT_DELAYS,
     CROWDED_POLLS,
     FAILED_OPENS,
     QUIET_POLLS,
     SPACING_STEPS,
     LinkTuner,
-    LinkTuning,
-    TimedUnit,
 )
+from sofar_modbus.tuning import LinkTuning, TimedUnit
 
 from .conftest import HYBRID_SERIAL, MODERN_HOLDING, fail_then
 
@@ -432,17 +431,6 @@ async def test_one_bad_open_among_good_ones_is_not_a_pattern(
     assert tuner.tuning.connect_delay == 0.0
 
 
-async def test_what_a_run_settled_on_comes_back(
-    mock_modbus_unit: MockModbusUnit,
-) -> None:
-    timed = TimedUnit(mock_modbus_unit)
-    settled = LinkTuning(spacing=0.05, connect_delay=0.5)
-    LinkTuner(timed).restore(settled)
-
-    assert mock_modbus_unit.message_spacing == 0.05
-    assert mock_modbus_unit.required_connect_delay == 0.5
-
-
 async def test_a_raised_poll_still_feeds_the_connect_delay_ladder(
     tuned: tuple[SofarInverter, LinkTuner], mock_modbus_unit: MockModbusUnit
 ) -> None:
@@ -479,7 +467,7 @@ async def test_a_raised_poll_is_not_a_quiet_one(
 
 
 def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
-    return [r.getMessage() for r in caplog.records if r.name == "sofar_modbus.tuning"]
+    return [r.getMessage() for r in caplog.records if r.name == "sofar_modbus._tuner"]
 
 
 @pytest.mark.parametrize(
@@ -572,7 +560,8 @@ async def test_the_longest_connect_delay_is_logged_as_kept(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     inverter, tuner = tuned
-    tuner.restore(LinkTuning(connect_delay=CONNECT_DELAYS[-1]))
+    for _ in CONNECT_DELAYS:
+        await _fail_opens(inverter, tuner, mock_modbus_unit)
     caplog.set_level(logging.DEBUG, logger="sofar_modbus")
     await _fail_opens(inverter, tuner, mock_modbus_unit)
 
@@ -580,13 +569,3 @@ async def test_the_longest_connect_delay_is_logged_as_kept(
         "Not lengthening the 2.0 s connect delay (2 unanswered opens): "
         "it is the longest"
     ]
-
-
-def test_a_restore_is_logged(
-    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
-) -> None:
-    caplog.set_level(logging.DEBUG, logger="sofar_modbus")
-    settled = LinkTuning(spacing=0.05, connect_delay=0.5)
-    LinkTuner(TimedUnit(mock_modbus_unit)).restore(settled)
-
-    assert _logged(caplog) == ["Restoring LinkTuning(spacing=0.05, connect_delay=0.5)"]
