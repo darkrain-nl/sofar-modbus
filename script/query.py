@@ -40,7 +40,7 @@ RegisterRead = tuple[int, int, list[int] | str]
 # An older inverter keeps its serial in the input registers.
 LEGACY_SERIAL = (0x2002, 6)
 # The holding blocks the earlier draft of the older map read.
-LEGACY_BLOCKS = [(0x0000, 0x21), (0x0200, 0x46), (0x0250, 6)]
+LEGACY_BLOCKS = [(0x0000, 33), (0x0200, 70), (0x0250, 6)]
 
 EXAMPLES = """examples:
   # a gateway answering Modbus TCP: pass no framing (502 is the default)
@@ -208,17 +208,19 @@ def _print_registers(reads: list[RegisterRead]) -> None:
             print(f"  0x{start + offset:04X}  0x{value:04X}  {value}")
 
 
-async def _query_legacy(unit: TimedUnit, ranges: list[tuple[int, int]]) -> None:
+async def _query_legacy(unit: TimedUnit, ranges: list[tuple[int, int]]) -> int:
     """Print an older inverter's serial and raw blocks, decoding nothing."""
     try:
         words = await unit.read_input_registers(*LEGACY_SERIAL)
     except ModbusError as err:
-        serial = _error(err)
-    else:
-        serial = b"".join(word.to_bytes(2) for word in words).decode("ascii", "replace")
+        print(f"Could not read the serial number: {_error(err)}")
+        print(f"{unit.reads} Modbus reads, {_timings(unit.stats)}")
+        return 1
+    serial = b"".join(word.to_bytes(2) for word in words).decode("ascii", "replace")
     _line("Serial number", serial.strip("\x00 "))
     _print_registers(await _read_registers(unit, [*LEGACY_BLOCKS, *ranges]))
     print(f"\n{unit.reads} Modbus reads, {_timings(unit.stats)}")
+    return 0
 
 
 async def main() -> int:
@@ -282,10 +284,9 @@ async def main() -> int:
     timed = TimedUnit(connection.for_unit(args.unit))
     if args.legacy:
         try:
-            await _query_legacy(timed, args.registers)
+            return await _query_legacy(timed, args.registers)
         finally:
             await connection.close()
-        return 0
     sweeps: list[str] = []
     try:
         inverter = await SofarInverter.async_detect(timed, read_pm=args.pm)

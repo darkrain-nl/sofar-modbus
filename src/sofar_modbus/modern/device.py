@@ -1,3 +1,21 @@
 """Old import path, kept until Core imports from sofar_modbus."""
 
-from sofar_modbus.device import *  # noqa: F403
+from ..device import (
+    BATTERY_PACKS,
+    BATTERY_STRING_COMPONENTS,
+    PV_STRING_COMPONENTS,
+    READING_COMPONENTS,
+    BatteryTowerSilentError,
+    InverterSilentError,
+    SofarInverter,
+)
+
+__all__ = [
+    "BATTERY_PACKS",
+    "BATTERY_STRING_COMPONENTS",
+    "PV_STRING_COMPONENTS",
+    "READING_COMPONENTS",
+    "BatteryTowerSilentError",
+    "InverterSilentError",
+    "SofarInverter",
+]
