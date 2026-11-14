@@ -22,10 +22,14 @@ from sofar_modbus import (
     SofarComponentBase,
     SofarInverter,
     SofarLegacyInverter,
-    UpdateReport,
     matches,
 )
-from sofar_modbus.modern import BATTERY_PACKS, BatteryPack, async_detect_type
+from sofar_modbus.modern import (
+    BATTERY_PACKS,
+    BatteryPack,
+    BatteryTowerSilentError,
+    async_detect_type,
+)
 from sofar_modbus.tuning import LinkStats, TimedUnit
 
 # RTU lines and TCP gateways; no ASCII, and tcp framings are deprecated.
@@ -141,13 +145,18 @@ async def _sweep_packs(inverter: SofarInverter, unit: TimedUnit) -> list[str]:
     for number in range(1, PACK_SWEEPS + 1):
         reads, started = unit.reads, time.monotonic()
         sweeps.append(
-            f"Pack poll {number}: {_outcome(await inverter.async_update_packs())}, "
+            f"Pack poll {number}: {await _pack_poll(inverter)}, "
             f"{unit.reads - reads} Modbus reads, {time.monotonic() - started:.1f} s"
         )
     return sweeps
 
 
-def _outcome(report: UpdateReport) -> str:
+async def _pack_poll(inverter: SofarInverter) -> str:
+    """How one pack poll went; a silent tower fails only that poll."""
+    try:
+        report = await inverter.async_update_packs()
+    except BatteryTowerSilentError as err:
+        return f"failed: {_error(err)}"
     if BATTERY_PACKS in report.updated:
         return "updated"
     return f"failed: {_error(report.failed[BATTERY_PACKS])}"
@@ -160,13 +169,11 @@ def _print_pack(pack: BatteryPack) -> None:
         return
     print(f"{title}\n{'-' * len(title)}\n  did not answer")
     # A tower can ignore the selection and keep serving another pack.
-    if pack.pack_id is not None and pack.pack_id & 0x0FFF != (
-        pack.group_nr << 8 | pack.pack_nr
+    if (served := pack.served_place) is not None and served != (
+        pack.group_nr,
+        pack.pack_nr,
     ):
-        print(
-            f"  the tower still serves group {pack.pack_id >> 8 & 0xF} "
-            f"pack {pack.pack_id & 0xFF}"
-        )
+        print(f"  the tower still serves group {served[0]} pack {served[1]}")
 
 
 def _print_packs(inverter: SofarInverter, sweeps: list[str]) -> None:

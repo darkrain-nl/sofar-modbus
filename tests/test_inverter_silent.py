@@ -95,9 +95,9 @@ SETUP_POLLS = [
         pytest.param("NOPE000000001", id="detect_type"),
     ],
 )
-async def test_a_gateway_during_setup_on_an_open_link_is_silence_when_asked(
+async def test_a_gateway_during_setup_on_an_open_link_is_silence(
     mock_modbus_unit: MockModbusUnit,
-    poll: Callable[..., Awaitable[UpdateReport]],
+    poll: Callable[[SofarInverter], Awaitable[UpdateReport]],
     serial_number: str,
 ) -> None:
     gateway = GatewayTargetError()
@@ -105,12 +105,12 @@ async def test_a_gateway_during_setup_on_an_open_link_is_silence_when_asked(
     inverter = SofarInverter(mock_modbus_unit, serial_number=serial_number)
 
     with pytest.raises(InverterSilentError) as info:
-        await poll(inverter, raise_when_silent=True)
+        await poll(inverter)
 
     assert info.value.__cause__ is gateway
 
 
-async def test_a_gateway_rating_during_setup_is_silence_when_asked(
+async def test_a_gateway_rating_during_setup_is_silence(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     mock_modbus_unit.holding.update(MODERN_HOLDING)
@@ -118,19 +118,7 @@ async def test_a_gateway_rating_during_setup_is_silence_when_asked(
     inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
 
     with pytest.raises(InverterSilentError):
-        await inverter.async_update_readings(raise_when_silent=True)
-
-
-@pytest.mark.parametrize("poll", SETUP_POLLS)
-async def test_a_gateway_during_setup_stays_raw_by_default(
-    mock_modbus_unit: MockModbusUnit,
-    poll: Callable[..., Awaitable[UpdateReport]],
-) -> None:
-    mock_modbus_unit.fail_requests(GatewayTargetError())
-    inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
-
-    with pytest.raises(GatewayTargetError):
-        await poll(inverter)
+        await inverter.async_update_readings()
 
 
 async def test_a_gateway_during_setup_on_a_closed_link_stays_raw(
@@ -143,7 +131,7 @@ async def test_a_gateway_during_setup_on_a_closed_link_stays_raw(
     inverter = SofarInverter(mock_modbus_unit, serial_number=HYBRID_SERIAL)
 
     with pytest.raises(GatewayTargetError):
-        await inverter.async_update_readings(raise_when_silent=True)
+        await inverter.async_update_readings()
 
 
 async def test_a_timeout_that_closes_the_link_stays_a_plain_timeout(
@@ -169,7 +157,7 @@ async def test_a_timeout_after_an_answer_stays_a_plain_timeout(
     await hybrid.async_update()
     mock_modbus_unit.fail_read(GRID_REGISTER, ModbusTimeoutError("slow grid block"))
 
-    report = await hybrid.async_update_readings(raise_when_silent=True)
+    report = await hybrid.async_update_readings()
 
     assert type(report.failed["grid"]) is ModbusTimeoutError
 
@@ -183,16 +171,14 @@ async def test_detection_on_an_open_link_raises_silence(
         await SofarInverter.async_detect(mock_modbus_unit)
 
 
-async def test_a_silent_gateway_poll_reports_by_default(
-    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit
+async def test_detection_keeps_a_gateway_error(
+    mock_modbus_unit: MockModbusUnit,
 ) -> None:
-    await hybrid.async_update()
+    """The config flow reports a gateway error as is."""
     mock_modbus_unit.fail_requests(GatewayTargetError())
 
-    report = await hybrid.async_update_readings()
-
-    assert not report.updated
-    assert all(isinstance(err, GatewayTargetError) for err in report.failed.values())
+    with pytest.raises(GatewayTargetError):
+        await SofarInverter.async_detect(mock_modbus_unit)
 
 
 @pytest.mark.parametrize(
@@ -210,18 +196,18 @@ async def test_a_silent_gateway_poll_reports_by_default(
         pytest.param({GRID_REGISTER: ModbusTimeoutError("no grid")}, id="with_timeout"),
     ],
 )
-async def test_a_silent_gateway_poll_raises_when_asked(
+async def test_a_silent_gateway_poll_raises(
     hybrid: SofarInverter,
     mock_modbus_unit: MockModbusUnit,
     monkeypatch: pytest.MonkeyPatch,
-    poll: Callable[..., Awaitable[UpdateReport]],
+    poll: Callable[[SofarInverter], Awaitable[UpdateReport]],
     errors: dict[int, Exception],
 ) -> None:
     await hybrid.async_update()
     answer_with(monkeypatch, mock_modbus_unit, errors)
 
     with pytest.raises(InverterSilentError) as info:
-        await poll(hybrid, raise_when_silent=True)
+        await poll(hybrid)
 
     assert isinstance(info.value.__cause__, ExceptionGroup)
 
@@ -236,7 +222,7 @@ async def test_a_refusal_proves_the_inverter_is_there(
         monkeypatch, mock_modbus_unit, {GRID_REGISTER: IllegalDataAddressError()}
     )
 
-    report = await hybrid.async_update_readings(raise_when_silent=True)
+    report = await hybrid.async_update_readings()
 
     assert not report.updated
     assert isinstance(report.failed["grid"], IllegalDataAddressError)
@@ -253,20 +239,20 @@ async def test_a_silent_gateway_poll_on_a_closed_link_raises_a_plain_timeout(
     drop_link_on_read(monkeypatch, mock_modbus_connection, mock_modbus_unit)
 
     with pytest.raises(ModbusTimeoutError) as info:
-        await hybrid.async_update_readings(raise_when_silent=True)
+        await hybrid.async_update_readings()
 
     assert type(info.value) is ModbusTimeoutError
     assert isinstance(info.value.__cause__, ExceptionGroup)
 
 
-async def test_an_empty_poll_reports_when_asked(
+async def test_an_empty_poll_reports(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """An unknown serial without masks polls nothing at all."""
     mock_modbus_unit.holding.update(MODERN_HOLDING)
     inverter = SofarInverter(mock_modbus_unit, serial_number="NOPE000000001")
 
-    report = await inverter.async_update_readings(raise_when_silent=True)
+    report = await inverter.async_update_readings()
 
     assert report == UpdateReport()
 
