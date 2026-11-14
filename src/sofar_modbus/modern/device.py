@@ -948,7 +948,7 @@ class SofarInverter(Device):
             report = await self._async_read_packs()
         if isinstance(err := report.failed.get(BATTERY_PACKS), _SILENCES):
             if not self.connected:
-                raise err
+                raise ModbusTimeoutError("the battery tower did not answer") from err
             raise BatteryTowerSilentError("the battery tower does not answer") from err
         return report
 

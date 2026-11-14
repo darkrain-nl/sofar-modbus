@@ -464,21 +464,29 @@ async def test_a_refusing_tower_reports(
     assert isinstance(report.failed[BATTERY_PACKS], ServerDeviceFailureError)
 
 
-async def test_a_silent_tower_on_a_closed_link_raises_its_failure(
+@pytest.mark.parametrize(
+    "silence",
+    [
+        pytest.param(ModbusTimeoutError("adapter gone"), id="timeout"),
+        pytest.param(GatewayTargetError(), id="gateway"),
+    ],
+)
+async def test_a_silent_tower_on_a_closed_link_raises_a_plain_timeout(
     tower: SofarInverter,
     mock_modbus_connection: MockModbusConnection,
     tower_unit: MockModbusUnit,
     monkeypatch: pytest.MonkeyPatch,
+    silence: ModbusError,
 ) -> None:
     await tower.async_ensure_setup()
     drop_link_on_read(monkeypatch, mock_modbus_connection, tower_unit)
-    silence = ModbusTimeoutError("adapter gone")
     tower_unit.fail_read(0x9022, silence)
 
     with pytest.raises(ModbusTimeoutError) as info:
         await tower.async_update_packs()
 
-    assert info.value is silence
+    assert type(info.value) is ModbusTimeoutError
+    assert info.value.__cause__ is silence
 
 
 async def test_an_offline_group_is_never_selected(
