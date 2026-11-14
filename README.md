@@ -13,13 +13,17 @@ attributes. It owns no connection and no I/O policy — the caller does.
 **`SofarInverter`** reads the current generation of Sofar inverters: HYD
 hybrids and KTL-X / KTLM PV inverters, over the 0x0400 (state and identity),
 0x0480 (grid), 0x0500 (off-grid), 0x0580 (PV), 0x0600 (battery), 0x0680
-(energy), 0x1000 (settings) and 0x9000 (BTS battery tower) blocks. Serial prefixes: `SP1`, `SP2`, `ZP1`,
-`ZP2`, `SM2E`, `ZM2E`, `SH3E`, `SS2E`, `ZS2E`, `SQ1ES1`, `SA1`, `SB1`, `SC1`,
-`SD1`, `SF4`, `SH1`, `SL1`, `SJ2`, `SS1`. Includes the Azzurro and ZCS
-rebadges.
+(energy), 0x1000 (settings) and 0x9000 (BTS battery tower) blocks. Serial
+prefixes: `SP1`, `SP2`, `ZP1`, `ZP2`, `SM2E`, `ZM2E`, `SH3E`, `SS2E`, `ZS2E`,
+`SQ1ES1`, `SA1`, `SB1`, `SC1`, `SD1`, `SF4`, `SH1`, `SL1`, `SJ2`, `SS1`.
+Includes the Azzurro and ZCS rebadges.
 
-The older generation (the 0x0000 and 0x0200 register map) is not supported:
-nobody with such an inverter could verify a map for it.
+**Have an older-generation inverter?** Those use a different register map
+(the 0x0000 and 0x0200 blocks), and support for them needs someone who can test
+on the real thing. If you own one and would like to help bring it back, please
+[open an issue](https://github.com/darkrain-nl/sofar-modbus/issues): a few
+register reads from your inverter are enough to get started, and an earlier
+draft of the map in the git history gives a head start.
 
 What an inverter serves depends on its model: single or three phase, PV-only
 or hybrid, how many MPPT trackers, whether off-grid (EPS) and parallel-system
@@ -365,16 +369,16 @@ line, as [Naming the link](#naming-the-link) explains. With a gateway answering
 Modbus TCP, leave the framing out: `--framer rtu` there times out on every
 register, which looks exactly like an inverter asleep.
 
-The script prints the read count as well, so a poll's request budget is visible against real hardware
-rather than only in the tests. It follows the count with how long those reads
+The script prints the read count as well, so a poll's request budget is
+visible against real hardware rather than only in the tests. It follows the count with how long those reads
 took, median, p95 and slowest, which is what to judge a timeout against.
-`--raw` adds every register it read, undecoded, which is what an issue about a
-wrong value should quote.
+`--raw` adds every register it read, undecoded, which is the most helpful thing
+to include in an issue about a wrong value.
 
-It also prints the address masks and the type
-they declare on their own, next to the type from the serial. A mismatch there,
-such as the masks declaring a PV string the serial's profile lacks, is the
-first thing to look for when entities are missing. The lines after it are the
+It also prints the address masks and the type they declare on their own, next
+to the type from the serial. A mismatch there, such as the masks declaring a PV
+string the serial's profile lacks, is the first thing to look for when entities
+are missing. The lines after it are the
 library's own verdicts (unrecognized, battery tower, wired battery strings,
 clock and IV-curve support), which decide what Home Assistant creates.
 `--registers ADDR[:COUNT]` reads any holding range raw, up to 125 registers
@@ -450,8 +454,8 @@ says so by answering the wrong exchange (`ModbusDesyncError`), by reporting
 itself busy, or by going quiet on a component that was answering a moment ago.
 A desync widens the gap at once, the other two after three polls, up to 200 ms.
 Twenty quiet polls give a step back, and each widening doubles the patience
-before that is tried again. A `budget=` caps the whole thing: the gap is never
-wider than that many seconds spread over the reads one poll makes, so a poll
+before that is tried again. A one-second budget caps the whole thing: the gap
+is never wider than a second spread over the reads one poll makes, so a poll
 cannot outgrow its interval. Registers a model has never served are exempt,
 since chasing an absent block would widen the gap forever.
 
