@@ -234,10 +234,10 @@ def _silent_on_open_link(
     except _SILENCES as err:
         if not unit.connected:
             raise
-        # Detection keeps it, so the config flow's message stays.
+        # Detection keeps a gateway's error; callers tell it apart from sleep.
         if keep_gateway_error and isinstance(err, GatewayTargetError):
             raise
-        # Keep the text: callers that predate this error print it.
+        # Keep the text, which callers print.
         raise InverterSilentError(*err.args) from err
 
 

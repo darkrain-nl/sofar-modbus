@@ -91,20 +91,26 @@ REFUSALS = pytest.mark.parametrize(
     [IllegalFunctionError(), IllegalDataAddressError(), IllegalDataValueError()],
     ids=lambda error: type(error).__name__,
 )
-# Answers from a unit that may still serve the block on a later try.
+# Answers a later try may still serve, and what setup raises for each.
+TRANSIENT: list[tuple[ModbusError, type[ModbusError]]] = [
+    (ModbusTimeoutError("no answer"), InverterSilentError),
+    (ServerDeviceFailureError(), ServerDeviceFailureError),
+    (AcknowledgeError(), AcknowledgeError),
+    (ServerDeviceBusyError(), ServerDeviceBusyError),
+    (MemoryParityError(), MemoryParityError),
+    (GatewayPathUnavailableError(), GatewayPathUnavailableError),
+    (GatewayTargetError(), InverterSilentError),
+    (ModbusProtocolError("garbled"), ModbusProtocolError),
+]
 TRANSIENT_ERRORS = pytest.mark.parametrize(
     "error",
-    [
-        ModbusTimeoutError("no answer"),
-        ServerDeviceFailureError(),
-        AcknowledgeError(),
-        ServerDeviceBusyError(),
-        MemoryParityError(),
-        GatewayPathUnavailableError(),
-        GatewayTargetError(),
-        ModbusProtocolError("garbled"),
-    ],
+    [error for error, _ in TRANSIENT],
     ids=lambda error: type(error).__name__,
+)
+SETUP_FAILURES = pytest.mark.parametrize(
+    ("error", "raised"),
+    TRANSIENT,
+    ids=[type(error).__name__ for error, _ in TRANSIENT],
 )
 
 # A diagnostics download from the same 4.4 KTLX-G3, keyed by block base.
@@ -322,14 +328,17 @@ async def test_a_refused_energy_mask_keeps_the_meter_block(
     assert "meter_energy" in pv_inverter.readings_components
 
 
-@TRANSIENT_ERRORS
+@SETUP_FAILURES
 async def test_a_missed_energy_mask_is_asked_again(
-    pv_inverter: SofarInverter, mock_modbus_unit: MockModbusUnit, error: ModbusError
+    pv_inverter: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    error: ModbusError,
+    raised: type[ModbusError],
 ) -> None:
     """A waking inverter can drop one read, which denies nothing yet."""
     mock_modbus_unit.holding[0x0680] = UNMETERED_ENERGY_MASK
     mock_modbus_unit.fail_read(0x0680, error)
-    with pytest.raises((type(error), InverterSilentError)):
+    with pytest.raises(raised):
         await pv_inverter.async_update()
     mock_modbus_unit.fail_read(0x0680, None)
     await pv_inverter.async_update()
@@ -387,15 +396,18 @@ async def test_a_refused_mask_drops_the_charge_cutoff(
     assert "battery_charge_cutoff" not in hybrid.settings_components
 
 
-@TRANSIENT_ERRORS
+@SETUP_FAILURES
 async def test_a_missed_charge_cutoff_mask_is_asked_again(
-    hybrid: SofarInverter, mock_modbus_unit: MockModbusUnit, error: ModbusError
+    hybrid: SofarInverter,
+    mock_modbus_unit: MockModbusUnit,
+    error: ModbusError,
+    raised: type[ModbusError],
 ) -> None:
     """Only a refusal is final; anything else must not drop the setting."""
     mock_modbus_unit.holding[0x1040] = CHARGE_CUTOFF_MASK
     mock_modbus_unit.holding[0x105B] = [95]
     mock_modbus_unit.fail_read(0x1040, error)
-    with pytest.raises((type(error), InverterSilentError)):
+    with pytest.raises(raised):
         await hybrid.async_update()
     mock_modbus_unit.fail_read(0x1040, None)
     await hybrid.async_update()
@@ -567,15 +579,18 @@ async def test_one_refused_block_decides_nothing(
     assert device.unrecognized
 
 
-@TRANSIENT_ERRORS
+@SETUP_FAILURES
 @pytest.mark.parametrize("silent", [0x0480, 0x0600, 0x0580])
 async def test_one_unanswered_block_is_asked_again(
-    mock_modbus_unit: MockModbusUnit, silent: int, error: ModbusError
+    mock_modbus_unit: MockModbusUnit,
+    silent: int,
+    error: ModbusError,
+    raised: type[ModbusError],
 ) -> None:
     """A dropped frame is no verdict, so it must not settle the type."""
     device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
     mock_modbus_unit.fail_read(silent, error)
-    with pytest.raises((type(error), InverterSilentError)):
+    with pytest.raises(raised):
         await device.async_update()
     mock_modbus_unit.fail_read(silent, None)
     await device.async_update()
@@ -711,13 +726,15 @@ async def test_a_known_serial_keeps_its_strings_without_a_higher_mask(
     assert "pv_3" not in device.readings_components
 
 
-@TRANSIENT_ERRORS
+@SETUP_FAILURES
 async def test_a_missed_pv_mask_is_asked_again(
-    mock_modbus_unit: MockModbusUnit, error: ModbusError
+    mock_modbus_unit: MockModbusUnit,
+    error: ModbusError,
+    raised: type[ModbusError],
 ) -> None:
     device = known_inverter(mock_modbus_unit, ESI_10K_PV_MASK)
     mock_modbus_unit.fail_read(0x0580, error)
-    with pytest.raises((type(error), InverterSilentError)):
+    with pytest.raises(raised):
         await device.async_update()
     mock_modbus_unit.fail_read(0x0580, None)
     await device.async_update()
@@ -811,14 +828,16 @@ async def test_detection_settles_the_verdict(
     assert device.unrecognized is unrecognized
 
 
-@TRANSIENT_ERRORS
+@SETUP_FAILURES
 async def test_an_unanswered_mask_is_no_verdict(
-    mock_modbus_unit: MockModbusUnit, error: ModbusError
+    mock_modbus_unit: MockModbusUnit,
+    error: ModbusError,
+    raised: type[ModbusError],
 ) -> None:
     """A sleeping inverter must not read as an unrecognized one."""
     device = unknown_inverter(mock_modbus_unit, KTLX_G3_MASKS)
     mock_modbus_unit.fail_read(0x0480, error)
-    with pytest.raises((type(error), InverterSilentError)):
+    with pytest.raises(raised):
         await device.async_update()
     assert not device.unrecognized
 

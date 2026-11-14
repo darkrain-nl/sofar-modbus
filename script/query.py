@@ -169,13 +169,11 @@ def _print_pack(pack: BatteryPack) -> None:
         return
     print(f"{title}\n{'-' * len(title)}\n  did not answer")
     # A tower can ignore the selection and keep serving another pack.
-    if pack.pack_id is not None and pack.pack_id & 0x0FFF != (
-        pack.group_nr << 8 | pack.pack_nr
+    if (served := pack.served_place) is not None and served != (
+        pack.group_nr,
+        pack.pack_nr,
     ):
-        print(
-            f"  the tower still serves group {pack.pack_id >> 8 & 0xF} "
-            f"pack {pack.pack_id & 0xFF}"
-        )
+        print(f"  the tower still serves group {served[0]} pack {served[1]}")
 
 
 def _print_packs(inverter: SofarInverter, sweeps: list[str]) -> None:
